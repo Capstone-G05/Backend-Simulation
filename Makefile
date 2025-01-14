@@ -1,18 +1,22 @@
-CXX       := g++
-CXXFLAGS  := -std=c++11 -Wall -Wextra
-LDLIBS    := -lhiredis
+CXX      := g++
+CXXFLAGS := -Wall -Wextra -g
+LDFLAGS  := -lhiredis
 
-TARGET    := simulation
+TARGET   := simulation
 
-SRCS      := simulation.cpp send_data.cpp
-OBJS      := $(SRCS:.cpp=.o)
+SRCS := simulation.cpp \
+        i2c_interface.cpp \
+        redis_interface.cpp
+
+OBJS := $(SRCS:.cpp=.o)
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDLIBS)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
 
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $<
+
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(TARGET) $(OBJS)

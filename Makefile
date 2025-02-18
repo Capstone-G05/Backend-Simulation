@@ -1,22 +1,26 @@
-CXX      := g++
-CXXFLAGS := -Wall -Wextra -g
-LDFLAGS  := -lhiredis
+CXX = g++
 
-TARGET   := simulation
+CXXFLAGS = -std=c++11 -Wall -Wextra -O2
 
-SRCS := simulation.cpp \
-        i2c_interface.cpp \
-        redis_interface.cpp
+LIBS = -lhiredis
 
-OBJS := $(SRCS:.cpp=.o)
+TARGET = simulation
+
+SRCS = simulation.cpp
+
+OBJS = $(SRCS:.cpp=.o)
 
 all: $(TARGET)
 
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
 
 %.o: %.cpp
-	$(CXX) $(CXXFLAGS) -c $<
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+
 
 clean:
-	rm -f $(TARGET) $(OBJS)
+	rm -f $(OBJS) $(TARGET)
+
+run: $(TARGET)
+	./$(TARGET)

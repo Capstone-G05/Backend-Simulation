@@ -1,409 +1,567 @@
 /****************************************************************************** 
  * simulation.cpp
  *
- * The main program that will be run. It will have the following functionality:
  *
- * - Send Data to Redis: Sends data to the redis database. Usually sending initial variables and data from STM32.
- * - Recieve Data from Redis: Recieves data from redis. Usually recieving data set from the tablet interface.
- * - Send Data to I2C: Sends data through the I2C connection to the STM32. Will be used to send PWM values and PTO status.
- * - Recieve Data from I2C: Recieves data from the STM32 peripheral. This data will send a variable and wether that variables should be increased or decreased.
+ *
  *
  ******************************************************************************/ 
-#include <iostream>
-#include <string>
-#include <cstdint>
-#include <unistd.h>
-#include <cerrno>
-#include <cstring>
-#include <fstream>
-#include <sstream>
-#include "i2c_interface.h"
-#include "redis_interface.h"
 
-// variables determined from config file
-static int MIN_AUGER_PIVOT_ANGLE;
-static int MAX_AUGER_PIVOT_ANGLE;
-static int MIN_AUGER_FOLD_ANGLE;
-static int MAX_AUGER_FOLD_ANGLE;
-static int MIN_SPOUT_TILT_ANGLE;
-static int MAX_SPOUT_TILT_ANGLE;
-static int MIN_SPOUT_ROTATION_ANGLE;
-static int MAX_SPOUT_ROTATION_ANGLE;
-static int MIN_GATE_OPEN_PERCENT;
-static int MAX_GATE_OPEN_PERCENT;
-static int AUGER_PIVOT_SPEED_REF;
-static int AUGER_FOLD_SPEED_REF;
-static int SPOUT_TILT_SPEED_REF;
-static int SPOUT_ROTATION_SPEED_REF;
-static int GATE_SPEED_REF;
-
-// variables sent from the I2C connection from the STM32
-static int augerPivotAngle = 90;
-static int augerFoldAngle = 90;
-static int spoutTiltAngle = 45;
-static int spoutRotationAngle = 90;
-static int gateOpenPercent = 0;
-static int oldAugerPivotAngle = 0;
-static int oldAugerFoldAngle = 0;
-static int oldSpoutTiltAngle = 0;
-static int oldSpoutRotationAngle = 0;
-static int oldGateOpenPercent = 0;
-
-// variables to be sent to the STM32 
-static uint8_t augerPivotUpPWM = 0;
-static uint8_t augerPivotDownPWM = 0;
-static uint8_t augerFoldFoldPWM = 0;
-static uint8_t augerFoldUnfoldPWM = 0;
-static uint8_t spoutTiltUpPWM = 0;
-static uint8_t spoutTiltDownPWM = 0;
-static uint8_t spoutRotationCWPWM = 0;
-static uint8_t spoutRotationCCWPWM = 0;
-static uint8_t gateOpenPWM = 0;
-static uint8_t gateClosePWM = 0;
-static bool ptoOnOff = false;
-static uint8_t oldAugerPivotUpPWM = 0;
-static uint8_t oldAugerPivotDownPWM = 0;
-static uint8_t oldAugerFoldFoldPWM = 0;
-static uint8_t oldAugerFoldUnfoldPWM = 0;
-static uint8_t oldSpoutTiltUpPWM = 0;
-static uint8_t oldSpoutTiltDownPWM = 0;
-static uint8_t oldSpoutRotationCWPWM = 0;
-static uint8_t oldSpoutRotationCCWPWM = 0;
-static uint8_t oldGateOpenPWM = 0;
-static uint8_t oldGateClosePWM = 0;
-static bool oldPtoOnOff = false;
-
-// Function to load the default values from the config file
-static bool loadConfigValues(const std::string &filename)
-{
-    // opens the config file
-    std::ifstream file(filename);
-    if (!file.is_open()) {
-        std::cerr << "ERROR: Could not open config file: " << filename << std::endl;
-        return false;
-    }
-
-    // use to while loop to read each line
-    std::string line;
-    while (std::getline(file, line)) {
-        // move on if the line does not exist
-        if (line.empty() || line[0] == '#') {
-            continue;
-        }
-
-        // splits the string at the "=" sign
-        std::size_t delimiterPos = line.find('=');
-        if (delimiterPos == std::string::npos) {
-            continue; 
-        }
-        std::string key   = line.substr(0, delimiterPos);
-        std::string value = line.substr(delimiterPos + 1);
-
-        // trims the lines of whitespace
-        auto trim = [](std::string &s) {
-            while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) {
-                s.erase(s.begin());
-            }
-            while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) {
-                s.pop_back();
-            }
-        };
-        trim(key);
-        trim(value);
-
-        int intValue = std::stoi(value);
-
-        // fills the values taken from the config file into their specific variables
-        if (key == "MIN_AUGER_PIVOT_ANGLE") {
-            MIN_AUGER_PIVOT_ANGLE = intValue;
-        } 
-        else if (key == "MAX_AUGER_PIVOT_ANGLE") {
-            MAX_AUGER_PIVOT_ANGLE = intValue;
-        } 
-        else if (key == "MIN_AUGER_FOLD_ANGLE") {
-            MIN_AUGER_FOLD_ANGLE = intValue;
-        } 
-        else if (key == "MAX_AUGER_FOLD_ANGLE") {
-            MAX_AUGER_FOLD_ANGLE = intValue;
-        } 
-        else if (key == "MIN_SPOUT_TILT_ANGLE") {
-            MIN_SPOUT_TILT_ANGLE = intValue;
-        } 
-        else if (key == "MAX_SPOUT_TILT_ANGLE") {
-            MAX_SPOUT_TILT_ANGLE = intValue;
-        } 
-        else if (key == "MIN_SPOUT_ROTATION_ANGLE") {
-            MIN_SPOUT_ROTATION_ANGLE = intValue;
-        } 
-        else if (key == "MAX_SPOUT_ROTATION_ANGLE") {
-            MAX_SPOUT_ROTATION_ANGLE = intValue;
-        } 
-        else if (key == "MIN_GATE_OPEN_PERCENT") {
-            MIN_GATE_OPEN_PERCENT = intValue;
-        } 
-        else if (key == "MAX_GATE_OPEN_PERCENT") {
-            MAX_GATE_OPEN_PERCENT = intValue;
-        } 
-        else if (key == "AUGER_PIVOT_SPEED_REF") {
-            AUGER_PIVOT_SPEED_REF = intValue;
-        } 
-        else if (key == "AUGER_FOLD_SPEED_REF") {
-            AUGER_FOLD_SPEED_REF = intValue;
-        } 
-        else if (key == "SPOUT_TILT_SPEED_REF") {
-            SPOUT_TILT_SPEED_REF = intValue;
-        } 
-        else if (key == "SPOUT_ROTATION_SPEED_REF") {
-            SPOUT_ROTATION_SPEED_REF = intValue;
-        } 
-        else if (key == "GATE_SPEED_REF") {
-            GATE_SPEED_REF = intValue;
-        }
-    }
-
-    file.close();
-    return true;
-}
-
-// Function to update that variables within our code
-static void updateVariable(int variableID, bool increment)
-{
-    switch (variableID) {
-        case 12:
-            if (increment) {
-                if (augerPivotAngle < MAX_AUGER_PIVOT_ANGLE) {
-                    augerPivotAngle += AUGER_PIVOT_SPEED_REF;
-                }
-            } else {
-                if (augerPivotAngle > MIN_AUGER_PIVOT_ANGLE) {
-                    augerPivotAngle -= AUGER_PIVOT_SPEED_REF;
-                }
-            }
-            break;
-        case 13:
-            if (increment) {
-                if (augerFoldAngle < MAX_AUGER_FOLD_ANGLE) {
-                    augerFoldAngle += AUGER_FOLD_SPEED_REF;
-                }
-            } else {
-                if (augerFoldAngle > MIN_AUGER_FOLD_ANGLE) {
-                    augerFoldAngle -= AUGER_FOLD_SPEED_REF;
-                }
-            }
-            break;
-        case 14:
-            if (increment) {
-                if (spoutTiltAngle < MAX_SPOUT_TILT_ANGLE) {
-                    spoutTiltAngle += SPOUT_TILT_SPEED_REF;
-                }
-            } else {
-                if (spoutTiltAngle > MIN_SPOUT_TILT_ANGLE) {
-                    spoutTiltAngle -= SPOUT_TILT_SPEED_REF;
-                }
-            }
-            break;
-        case 15:
-            if (increment) {
-                if (spoutRotationAngle < MAX_SPOUT_ROTATION_ANGLE) {
-                    spoutRotationAngle += SPOUT_ROTATION_SPEED_REF;
-                }
-            } else {
-                if (spoutRotationAngle > MIN_SPOUT_ROTATION_ANGLE) {
-                    spoutRotationAngle -= SPOUT_ROTATION_SPEED_REF;
-                }
-            }
-            break;
-        case 16:
-            if (increment) {
-                if (gateOpenPercent < MAX_GATE_OPEN_PERCENT) {
-                    gateOpenPercent += GATE_SPEED_REF;
-                }
-            } else {
-                if (gateOpenPercent > MIN_GATE_OPEN_PERCENT) {
-                    gateOpenPercent -= GATE_SPEED_REF;
-                }
-            }
-            break;
-        default:
-            break;
-    }
-}
-
-// Function to send inputted values into the redis server
-static void sendUpdatedValueToRedis(const std::string &key, int value)
-{
-    int rc = sendDataToRedis("127.0.0.1", 6379, key, std::to_string(value), "");
-    if (rc != 0) {
-        std::cerr << "Failed to update Redis key: " << key << std::endl;
-    } else {
-        std::cout << "Updated Redis key: " << key << " => " << value << std::endl;
-    }
-}
-
-int main()
-{
-    std::cout << "Starting simulation." << std::endl;
-
-    // read the config file
-    if (!loadConfigValues("config.txt")){
-        std::cerr << "Config File does not exist. Exiting Program.\n";
-        return 1;
-    }
-
-    // Open I2C connection
-    int fileI2C = openI2C("/dev/i2c-1", 0x02);
-    if (fileI2C < 0) {
-        std::cerr << "Could not open I2C device. Exiting Program." << std::endl;
-        return 1;
-    }
-
-    // Send initial Values to the Redis server
-    sendUpdatedValueToRedis("auger_pivot_angle_min", MIN_AUGER_PIVOT_ANGLE);
-    sendUpdatedValueToRedis("auger_pivot_angle_max", MAX_AUGER_PIVOT_ANGLE);
-    sendUpdatedValueToRedis("auger_fold_angle_min", MIN_AUGER_FOLD_ANGLE);
-    sendUpdatedValueToRedis("auger_fold_angle_max", MAX_AUGER_FOLD_ANGLE);
-    sendUpdatedValueToRedis("spout_tilt_angle_min", MIN_SPOUT_TILT_ANGLE);
-    sendUpdatedValueToRedis("spout_tilt_angle_max", MAX_SPOUT_TILT_ANGLE);
-    sendUpdatedValueToRedis("spout_rotation_angle_min", MIN_SPOUT_ROTATION_ANGLE);
-    sendUpdatedValueToRedis("spout_rotation_angle_max", MAX_SPOUT_ROTATION_ANGLE);
-    sendUpdatedValueToRedis("gate_angle_min", MIN_GATE_OPEN_PERCENT);
-    sendUpdatedValueToRedis("gate_angle_max", MAX_GATE_OPEN_PERCENT);
-    sendUpdatedValueToRedis("auger_pivot_speed_ref", AUGER_PIVOT_SPEED_REF);
-    sendUpdatedValueToRedis("auger_fold_speed_ref", AUGER_FOLD_SPEED_REF);
-    sendUpdatedValueToRedis("spout_tilt_speed_ref", SPOUT_TILT_SPEED_REF);
-    sendUpdatedValueToRedis("spout_rotation_speed_ref", SPOUT_ROTATION_SPEED_REF);
-    sendUpdatedValueToRedis("gate_speed_ref", GATE_SPEED_REF);
-
-    while (true) {
-        uint8_t byteIn = 0;
-        // read the data from the I2C connection
-        int bytesRead = readFromI2C(fileI2C, &byteIn, 1);
-        if (bytesRead == 1) {
-            // Extact the variable ID and increment (Will have to modify this a bit)
-            int  variableID = (byteIn & 0x7F);
-            bool increment  = ((byteIn & 0x80) != 0);
-
-            updateVariable(variableID, increment);
-
-            // If the angles/percents have changed, push updates to Redis
-            bool valueChanged = false;
-            switch (variableID) {
-                case 12:
-                    if (augerPivotAngle != oldAugerPivotAngle) {
-                        oldAugerPivotAngle = augerPivotAngle;
-                        valueChanged = true;
-                    }
-                    break;
-                case 13:
-                    if (augerFoldAngle != oldAugerFoldAngle) {
-                        oldAugerFoldAngle = augerFoldAngle;
-                        valueChanged = true;
-                    }
-                    break;
-                case 14:
-                    if (spoutTiltAngle != oldSpoutTiltAngle) {
-                        oldSpoutTiltAngle = spoutTiltAngle;
-                        valueChanged = true;
-                    }
-                    break;
-                case 15:
-                    if (spoutRotationAngle != oldSpoutRotationAngle) {
-                        oldSpoutRotationAngle = spoutRotationAngle;
-                        valueChanged = true;
-                    }
-                    break;
-                case 16:
-                    if (gateOpenPercent != oldGateOpenPercent) {
-                        oldGateOpenPercent = gateOpenPercent;
-                        valueChanged = true;
-                    }
-                    break;
-                default:
-                    break;
-            }
-
-            // Send the value to redis if it has changed
-            if (valueChanged) {
-                switch (variableID) {
-                    case 12:
-                        sendUpdatedValueToRedis("auger_pivot_angle", augerPivotAngle);
-                        break;
-                    case 13:
-                        sendUpdatedValueToRedis("auger_fold_angle", augerFoldAngle);
-                        break;
-                    case 14:
-                        sendUpdatedValueToRedis("spout_tilt_angle", spoutTiltAngle);
-                        break;
-                    case 15:
-                        sendUpdatedValueToRedis("spout_rotation_angle", spoutRotationAngle);
-                        break;
-                    case 16:
-                        sendUpdatedValueToRedis("gate_angle", gateOpenPercent);
-                        break;
-                }
-            }
-        }
-
-        // Check if the auger pivot PWM variables have changed or not. Send them to the STM32 if they have.
-        if (augerPivotUpPWM != oldAugerPivotUpPWM) {
-            writeToI2C(fileI2C, 1, static_cast<uint16_t>(augerPivotUpPWM));
-            oldAugerPivotUpPWM = augerPivotUpPWM;
-        }
-
-        if (augerPivotDownPWM != oldAugerPivotDownPWM) {
-            writeToI2C(fileI2C, 2, static_cast<uint16_t>(augerPivotDownPWM));
-            oldAugerPivotDownPWM = augerPivotDownPWM;
-        }
-
-        if (augerFoldFoldPWM != oldAugerFoldFoldPWM) {
-            writeToI2C(fileI2C, 3, static_cast<uint16_t>(augerFoldFoldPWM));
-            oldAugerFoldFoldPWM = augerFoldFoldPWM;
-        }
-
-        if (augerFoldUnfoldPWM != oldAugerFoldUnfoldPWM) {
-            writeToI2C(fileI2C, 4, static_cast<uint16_t>(augerFoldUnfoldPWM));
-            oldAugerFoldUnfoldPWM = augerFoldUnfoldPWM;
-        }
-
-        if (spoutTiltUpPWM != oldSpoutTiltUpPWM) {
-            writeToI2C(fileI2C, 5, static_cast<uint16_t>(spoutTiltUpPWM));
-            oldSpoutTiltUpPWM = spoutTiltUpPWM;
-        }
-
-        if (spoutTiltDownPWM != oldSpoutTiltDownPWM) {
-            writeToI2C(fileI2C, 6, static_cast<uint16_t>(spoutTiltDownPWM));
-            oldSpoutTiltDownPWM = spoutTiltDownPWM;
-        }
-
-        if (spoutRotationCWPWM != oldSpoutRotationCWPWM) {
-            writeToI2C(fileI2C, 7, static_cast<uint16_t>(spoutRotationCWPWM));
-            oldSpoutRotationCWPWM = spoutRotationCWPWM;
-        }
-
-        if (spoutRotationCCWPWM != oldSpoutRotationCCWPWM) {
-            writeToI2C(fileI2C, 8, static_cast<uint16_t>(spoutRotationCCWPWM));
-            oldSpoutRotationCCWPWM = spoutRotationCCWPWM;
-        }
-
-        if (gateOpenPWM != oldGateOpenPWM) {
-            writeToI2C(fileI2C, 9, static_cast<uint16_t>(gateOpenPWM));
-            oldGateOpenPWM = gateOpenPWM;
-        }
-
-        if (gateClosePWM != oldGateClosePWM) {
-            writeToI2C(fileI2C, 10, static_cast<uint16_t>(gateClosePWM));
-            oldGateClosePWM = gateClosePWM;
-        }
-
-        if (ptoOnOff != oldPtoOnOff) {
-            uint16_t ptoBit = ptoOnOff ? 1 : 0; 
-            writeToI2C(fileI2C, 11, ptoBit);
-            oldPtoOnOff = ptoOnOff;
-        }
-
-        usleep(100 * 1000); // Wait for 100 ms
-    }
-
-    closeI2C(fileI2C); //Close file
-    return 0;
-}
+ #include <iostream>
+ #include <string>
+ #include <cstdint>
+ #include <unistd.h>
+ #include <cerrno>
+ #include <cstring>
+ #include <fstream>
+ #include <sstream>
+ #include <cstdlib>
+ #include <csignal>
+ #include <fcntl.h>
+ #include <sys/ioctl.h>
+ #include <linux/i2c-dev.h>
+ #include <hiredis/hiredis.h>
+ 
+ // I2C bus and device addresses
+ #define I2C_BUS "/dev/i2c-1"
+ #define STM32_ADDRESS 0x10
+ #define DAC_ADDRESS    0x60
+ 
+ // Buffer sizes and delay
+ #define STM_BUFFER_SIZE 4
+ #define DAC_TX_BUFFER_SIZE 3
+ #define DAC_RX_BUFFER_SIZE 2
+ #define MESSAGE_DELAY_US 10000
+ 
+ const char* redis_host = getenv("REDIS_HOST");
+ const int redis_port = atoi(getenv("REDIS_PORT"));
+ 
+ // DAC command masks
+ const uint8_t DAC_WRITE_CMD_MASK = 0x00;  
+ const uint8_t DAC_READ_CMD_MASK  = 0x06;  
+ 
+ // Global file descriptors for I2C devices
+ int fd_stm32 = -1;
+ int fd_dac = -1;
+ 
+ // Global variables for control values
+ static uint16_t augerBottomPivotAngle = 90;
+ static uint16_t augerTopAngle = 90;
+ static uint16_t spoutTiltAngle = 45;
+ static uint16_t headRotationAngle = 90;
+ static uint16_t gateAngle = 0;
+ static uint16_t ptoOnOff = 0;
+ static uint16_t cropFillRate = 0;
+ 
+ static uint16_t augerBottomPivotAngleMin = 0;
+ static uint16_t augerBottomPivotAngleMax = 180;
+ static uint16_t augerBottomPivotSpeedRef = 50;
+ 
+ static uint16_t augerTopAngleMin = 0;
+ static uint16_t augerTopAngleMax = 180;
+ static uint16_t augerTopRefSpeed = 50;
+ 
+ static uint16_t spoutTiltAngleMin = 0;
+ static uint16_t spoutTiltAngleMax = 90;
+ static uint16_t spoutTiltRefSpeed = 30;
+ 
+ static uint16_t headRotationAngleMin = 0;
+ static uint16_t headRotationAngleMax = 180;
+ static uint16_t headRotationRefSpeed = 40;
+ 
+ static uint16_t gateAngleMin = 0;
+ static uint16_t gateAngleMax = 100;
+ static uint16_t gateRefSpeed = 20;
+ 
+ static uint16_t machineType = 0;
+ static uint16_t frontWeight = 0;
+ static uint16_t rearWeight = 0;
+ 
+ int sendDataToRedis(const std::string &hostname,
+     int port,
+     const std::string &key,
+     const std::string &value,
+     const std::string &password);
+ int getDataFromRedis(const std::string &hostname,
+     int port,
+     const std::string &key,
+     std::string &outValue,
+     const std::string &password);
+ void sendUpdatedValueToRedis(const std::string &key, int value);
+ int openI2CDevice(const std::string &i2cBus, int address);
+ int readFromSTM32(int file, unsigned char *buffer, size_t length);
+ bool writeToSTM32(int file, unsigned char *bytes, size_t size);
+ int openDACDevice(const std::string &i2cBus, int address);
+ int writeDAC(int dac_fd, uint8_t reg, uint16_t value);
+ int readDAC(int dac_fd, uint8_t reg, uint16_t *value);
+ void cleanup();
+ 
+ void cleanup() {
+     if (fd_stm32 >= 0) {
+         close(fd_stm32);
+     }
+     if (fd_dac >= 0) {
+         close(fd_dac);
+     }
+ }
+ 
+ int openI2CDevice(const std::string &i2cBus, int address) {
+     int file = open(i2cBus.c_str(), O_RDWR);
+     if (file < 0) {
+         perror("Failed to open I2C bus");
+         return -1;
+     }
+     if (ioctl(file, I2C_SLAVE, address) < 0) {
+         perror("Failed to set I2C slave address");
+         close(file);
+         return -1;
+     }
+     return file;
+ }
+ 
+ int readFromSTM32(int file, unsigned char *buffer, size_t length) {
+     if (read(file, buffer, length) != (ssize_t)length) {
+         perror("Failed to read bytes from STM32");
+         return -1;
+     }
+ 
+     uint8_t header = buffer[0];
+     uint8_t rw = header >> 7;
+     uint8_t type = header & 0x7F;
+     uint8_t index = buffer[1];
+     uint16_t data = (buffer[2] << 8) | buffer[3];
+     return 0;
+ }
+ 
+ bool writeToSTM32(int file, unsigned char *bytes, size_t size) {
+     if (write(file, bytes, size) != (ssize_t)size) {
+         perror("Failed to write bytes to STM32");
+         return false;
+     }
+     std::cout << "Sent message to STM32: ";
+     for (size_t i = 0; i < size; i++) {
+         printf("%02X ", bytes[i]);
+     }
+     std::cout << std::endl;
+     return true;
+ }
+ 
+ void buildI2CMessage(unsigned char *buffer, bool rw, uint8_t type, uint8_t index, uint16_t data) {
+     buffer[0] = ((rw ? 1 : 0) << 7) | (type & 0x7F);
+     buffer[1] = index;
+     buffer[2] = (data >> 8) & 0xFF;
+     buffer[3] = data & 0xFF;
+ }
+ 
+ int openDACDevice(const std::string &i2cBus, int address) {
+     int file = open(i2cBus.c_str(), O_RDWR);
+     if (file < 0) {
+         perror("Failed to open I2C bus for DAC");
+         return -1;
+     }
+     if (ioctl(file, I2C_SLAVE, address) < 0) {
+         perror("Failed to set DAC I2C slave address");
+         close(file);
+         return -1;
+     }
+     return file;
+ }
+ 
+ int writeDAC(int dac_fd, uint8_t reg, uint16_t value) {
+     if (reg > 0x1F) {
+         std::cerr << "Invalid DAC register index. Must be between 0 and 31." << std::endl;
+         return -1;
+     }
+     unsigned char tx_buffer[DAC_TX_BUFFER_SIZE];
+     tx_buffer[0] = ((reg & 0x1F) << 3) | DAC_WRITE_CMD_MASK;
+     tx_buffer[1] = (value >> 8) & 0xFF;
+     tx_buffer[2] = value & 0xFF;
+     if (write(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE) != DAC_TX_BUFFER_SIZE) {
+         perror("Failed to write bytes to DAC");
+         return -1;
+     }
+     std::cout << "DAC write: Reg " << static_cast<int>(reg)
+             << " Value " << value << std::endl;
+     return 0;
+ }
+ 
+ int readDAC(int dac_fd, uint8_t reg, uint16_t *value) {
+     if (reg > 0x1F) {
+         std::cerr << "Invalid DAC register index. Must be between 0 and 31." << std::endl;
+         return -1;
+     }
+     unsigned char tx_buffer[1];
+     unsigned char rx_buffer[DAC_RX_BUFFER_SIZE];
+     tx_buffer[0] = ((reg & 0x1F) << 3) | DAC_READ_CMD_MASK;
+     if (write(dac_fd, tx_buffer, 1) != 1) {
+         perror("Failed to send read request to DAC");
+         return -1;
+     }
+     usleep(MESSAGE_DELAY_US);
+     if (read(dac_fd, rx_buffer, DAC_RX_BUFFER_SIZE) != DAC_RX_BUFFER_SIZE) {
+         perror("Failed to read bytes from DAC");
+         return -1;
+     }
+     *value = (rx_buffer[0] << 8) | rx_buffer[1];
+     std::cout << "DAC read: Reg " << static_cast<int>(reg)
+             << " Value " << *value << std::endl;
+     return 0;
+ }
+ 
+ // Function to send data to the Redis server
+ int sendDataToRedis(const std::string &hostname,
+                     int port,
+                     const std::string &key,
+                     const std::string &value,
+                     const std::string &password)
+ {
+     // Connect to Redis
+     redisContext *c = redisConnect(hostname.c_str(), port);
+     if (c == nullptr || c->err) {
+         if (c) {
+             std::cerr << "[ERROR] Connection error: " << c->errstr << std::endl;
+             redisFree(c);
+         } else {
+             std::cerr << "[ERROR] Connection error: can't allocate redis context." << std::endl;
+         }
+         return -1;
+     }
+ 
+     // Set the password if needed
+     if (!password.empty()) {
+         redisReply *authReply = (redisReply *)redisCommand(c, "AUTH %s", password.c_str());
+         if (!authReply || authReply->type == REDIS_REPLY_ERROR) {
+             std::cerr << "[ERROR] Redis AUTH failed. Check password or Redis config.";
+             if (authReply) {
+                 std::cerr << " Error: " << authReply->str;
+                 freeReplyObject(authReply);
+             }
+             std::cerr << std::endl;
+             redisFree(c);
+             return -1;
+         }
+         freeReplyObject(authReply);
+     }
+ 
+     // Send the SET command to Redis
+     redisReply *reply = (redisReply *)redisCommand(c, "SET %s %s", key.c_str(), value.c_str());
+     if (!reply) {
+         std::cerr << "ERROR: " << c->errstr << std::endl;
+         redisFree(c);
+         return -1;
+     }
+ 
+     // Log the result if successful
+     if (reply->type == REDIS_REPLY_STATUS) {
+         std::cout << "Redis SET: " << key << " => " << value
+                 << " (" << reply->str << ")" << std::endl;
+     }
+ 
+     freeReplyObject(reply);
+     redisFree(c);
+     return 0;
+ }
+ 
+ // Function to obtain data from the Redis server
+ int getDataFromRedis(const std::string &hostname,
+                     int port,
+                     const std::string &key,
+                     std::string &outValue,
+                     const std::string &password)
+ {
+     // Connect to Redis
+     redisContext *c = redisConnect(hostname.c_str(), port);
+     if (c == nullptr || c->err) {
+         if (c) {
+             std::cerr << "[ERROR] Connection error: " << c->errstr << std::endl;
+             redisFree(c);
+         } else {
+             std::cerr << "[ERROR] Connection error: can't allocate redis context." << std::endl;
+         }
+         return -1;
+     }
+ 
+     // Use password if applicable
+     if (!password.empty()) {
+         redisReply *authReply = (redisReply *)redisCommand(c, "AUTH %s", password.c_str());
+         if (!authReply || authReply->type == REDIS_REPLY_ERROR) {
+             std::cerr << "[ERROR] Redis AUTH failed.\n";
+             if (authReply) {
+                 std::cerr << "       Error: " << authReply->str << std::endl;
+                 freeReplyObject(authReply);
+             }
+             redisFree(c);
+             return -1;
+         }
+         freeReplyObject(authReply);
+     }
+ 
+     // Send the GET command to Redis
+     redisReply *reply = (redisReply *)redisCommand(c, "GET %s", key.c_str());
+     if (!reply) {
+         std::cerr << "[ERROR] Command error: " << c->errstr << std::endl;
+         redisFree(c);
+         return -1;
+     }
+ 
+     if (reply->type == REDIS_REPLY_STRING) {
+         outValue = reply->str;
+     } else if (reply->type == REDIS_REPLY_NIL) {
+         outValue.clear();
+     } else {
+         outValue.clear();
+     }
+ 
+     freeReplyObject(reply);
+     redisFree(c);
+     return 0;
+ }
+ 
+ void sendUpdatedValueToRedis(const std::string &key, int value) {
+     int rc = sendDataToRedis(redis_host, redis_port, key, std::to_string(value), "");
+     if (rc != 0) {
+         std::cerr << "Failed to update Redis key: " << key << std::endl;
+     } else {
+         std::cout << "Updated Redis key: " << key << " => " << value << std::endl;
+     }
+ }
+ 
+ void sendPWMValuesToRedis(const std::string &key, uint8_t address){
+     unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+     unsigned char stm_rx_buffer[STM_BUFFER_SIZE] = {0};
+ 
+     buildI2CMessage(stm_tx_buffer, true, 0x02, address, 0x0000);
+     writeToSTM32(fd_stm32, stm_tx_buffer, STM_BUFFER_SIZE);
+     usleep(MESSAGE_DELAY_US);
+     readFromSTM32(fd_stm32, stm_rx_buffer, STM_BUFFER_SIZE);
+     uint8_t header = stm_rx_buffer[0];
+     uint8_t rw = header >> 7; 
+     uint8_t type = header & 0x7F; 
+     uint8_t index = stm_rx_buffer[1];
+     uint16_t data = (stm_rx_buffer[2] << 8) | stm_rx_buffer[3];
+     sendUpdatedValueToRedis(key, data);
+ }
+ 
+ int main() {
+     std::cout << "Starting Raspberry Pi Simulation." << std::endl;
+     
+     // Open I2C connections to STM32 and DAC
+     fd_stm32 = openI2CDevice(I2C_BUS, STM32_ADDRESS);
+     if (fd_stm32 < 0) {
+         std::cerr << "Could not open I2C device for STM32. Exiting." << std::endl;
+         return 1;
+     }
+     
+     fd_dac = openDACDevice(I2C_BUS, DAC_ADDRESS);
+     if (fd_dac < 0) {
+         std::cerr << "Could not open I2C device for DAC. Exiting." << std::endl;
+         cleanup();
+         return 1;
+     }
+     
+     // Obtain the initial values from Redis
+     std::string redisValue;
+     int rc;
+     rc = getDataFromRedis(redis_host, redis_port, "auger_bottom_pivot_angle_max", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerBottomPivotAngleMax = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "auger_bottom_pivot_angle_min", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerBottomPivotAngleMin = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "auger_bottom_pivot_speed_ref", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerBottomPivotSpeedRef = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "auger_top_angle_min", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerTopAngleMin = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "auger_top_angle_max", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerTopAngleMax = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "auger_top_speed_ref", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) augerTopRefSpeed = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "spout_tilt_angle_min", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) spoutTiltAngleMin = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "spout_tilt_angle_max", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) spoutTiltAngleMax = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "spout_tilt_speed_ref", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) spoutTiltRefSpeed = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "head_rotation_angle_min", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) headRotationAngleMin = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "head_rotation_angle_max", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) headRotationAngleMax = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "head_rotation_speed_ref", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) headRotationRefSpeed = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "gate_angle_min", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) gateAngleMin = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "gate_angle_max", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) gateAngleMax = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "gate_speed_ref", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) gateRefSpeed = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "machine_type", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) machineType = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "front_weight", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) frontWeight = std::atoi(redisValue.c_str());
+     
+     rc = getDataFromRedis(redis_host, redis_port, "rear_weight", redisValue, "");
+     if (rc == 0 && !redisValue.empty()) rearWeight = std::atoi(redisValue.c_str());
+     
+     int redisCheckCounter = 0;
+     while (true) {
+         // Obtain PWM values and send them to redis
+         sendPWMValuesToRedis("auger_bottom_pivot_up_pwm", 0x08);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("auger_bottom_pivot_down_pwm", 0x04);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("auger_top_unfold_pwm", 0x0B);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("auger_top_fold_pwm", 0x0A);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("spout_tilt_up_pwm", 0x01);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("spout_tilt_down_pwm", 0x03);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("head_rotation_cw_pwm", 0x06);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("head_rotation_ccw_pwm", 0x07);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("gate_open_pwm", 0x05);
+         usleep(MESSAGE_DELAY_US);
+         sendPWMValuesToRedis("gate_close_pwm", 0x09);
+         usleep(MESSAGE_DELAY_US);
+         // Tandem Float and Tandem Cutoff not done due to no redis values being made for them
+ 
+         // Check heartbeat
+         unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+         unsigned char stm_rx_buffer[STM_BUFFER_SIZE] = {0};
+         buildI2CMessage(stm_tx_buffer, true, 0x04, 0x00, 0x0000);
+         writeToSTM32(fd_stm32, stm_tx_buffer, STM_BUFFER_SIZE);
+         usleep(MESSAGE_DELAY_US);
+         readFromSTM32(fd_stm32, stm_rx_buffer, STM_BUFFER_SIZE);
+         uint8_t header = stm_rx_buffer[0];
+         uint8_t rw = header >> 7; 
+         uint8_t type = header & 0x7F; 
+         uint8_t index = stm_rx_buffer[1];
+         uint16_t data = (stm_rx_buffer[2] << 8) | stm_rx_buffer[3];
+         if (type == 0x05 && rw == 0x00){
+             sendUpdatedValueToRedis("simulation_power", 1);
+         }
+         else{
+             sendUpdatedValueToRedis("simulation_power", 0);
+         }
+         redisCheckCounter++;
+         if (redisCheckCounter >= 10) {
+             redisCheckCounter = 0;
+             std::string redisValue;
+             int rc;
+             
+             rc = getDataFromRedis(redis_host, redis_port, "auger_bottom_pivot_angle", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != augerBottomPivotAngle) {
+                     augerBottomPivotAngle = newVal;
+                     writeDAC(fd_dac, 0, augerBottomPivotAngle);
+                 }
+             }
+             
+             rc = getDataFromRedis(redis_host, redis_port, "auger_top_angle", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != augerTopAngle) {
+                     augerTopAngle = newVal;
+                     writeDAC(fd_dac, 1, augerTopAngle);
+                 }
+             }
+             
+             rc = getDataFromRedis(redis_host, redis_port, "spout_tilt_angle", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != spoutTiltAngle) {
+                     spoutTiltAngle = newVal;
+                     writeDAC(fd_dac, 2, spoutTiltAngle);
+                 }
+             }
+             
+             rc = getDataFromRedis(redis_host, redis_port, "head_rotation_angle", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != headRotationAngle) {
+                     headRotationAngle = newVal;
+                     writeDAC(fd_dac, 3, headRotationAngle);
+                 }
+             }
+ 
+             rc = getDataFromRedis(redis_host, redis_port, "gate_angle", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != gateAngle) {
+                     gateAngle = newVal;
+                     writeDAC(fd_dac, 0x04, gateAngle);
+                 }
+             }
+ 
+             rc = getDataFromRedis(redis_host, redis_port, "front_weight", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != gateAngle) {
+                     frontWeight = newVal;
+                     uint16_t leftFrontWeight = frontWeight/2;
+                     uint16_t rightFrontWeight = frontWeight/2;
+                     unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+                     buildI2CMessage(stm_tx_buffer, false, 0x03, 0x00, 0x0000);
+                     writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                     buildI2CMessage(stm_tx_buffer, false, 0x03, 0x01, 0x0000);
+                     writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                 }
+             }
+             
+             rc = getDataFromRedis(redis_host, redis_port, "rear_weight", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 uint16_t newVal = std::atoi(redisValue.c_str());
+                 if (newVal != gateAngle) {
+                     rearWeight = newVal;
+                     uint16_t leftRearWeight = rearWeight/2;
+                     uint16_t rightRearWeight = rearWeight/2;
+                     unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+                     buildI2CMessage(stm_tx_buffer, false, 0x03, 0x02, 0x0000);
+                     writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                     buildI2CMessage(stm_tx_buffer, false, 0x03, 0x03, 0x0000);
+                     writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                 }
+             }
+ 
+             rc = getDataFromRedis(redis_host, redis_port, "pto", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 int newPTO = std::atoi(redisValue.c_str());
+                 if (newPTO != ptoOnOff) {
+                     ptoOnOff = newPTO;
+                     unsigned char ptoCommand = static_cast<unsigned char>(ptoOnOff);
+                     writeToSTM32(fd_stm32, &ptoCommand, 1);
+                 }
+             }
+             // Note wheel speed not implemented due to no database entries pertaining to that existing
+             
+             rc = getDataFromRedis(redis_host, redis_port, "crop_fill_rate", redisValue, "");
+             if (rc == 0 && !redisValue.empty()) {
+                 int newVal = std::atoi(redisValue.c_str());
+                 if (newVal != cropFillRate) {
+                     cropFillRate = newVal;
+                 }
+             }
+             
+         }
+     }
+     
+     cleanup();
+     sendUpdatedValueToRedis("simulation_power", 0);
+     return 0;
+ }

@@ -30,7 +30,7 @@
 #define STM_BUFFER_SIZE 4
 #define DAC_TX_BUFFER_SIZE 3
 #define DAC_RX_BUFFER_SIZE 2
-#define MESSAGE_DELAY_US 5000
+#define MESSAGE_DELAY_US 10000
 
 // DAC command masks
 const uint8_t DAC_WRITE_CMD_MASK = 0x00;  
@@ -41,40 +41,37 @@ int fd_stm32 = -1;
 int fd_dac = -1;
 
 // Global variables for control values
-static int augerBottomPivotAngle = 90;
-static int augerTopAngle = 90;
-static int spoutTiltAngle = 45;
-static int headRotationAngle = 90;
-static int gateAngle = 0;
-static int ptoOnOff = 0;
-static int cropFillRate = 0;
+static uint16_t augerBottomPivotAngle = 90;
+static uint16_t augerTopAngle = 90;
+static uint16_t spoutTiltAngle = 45;
+static uint16_t headRotationAngle = 90;
+static uint16_t gateAngle = 0;
+static uint16_t ptoOnOff = 0;
+static uint16_t cropFillRate = 0;
 
-static int augerBottomPivotAngleMin = 0;
-static int augerBottomPivotAngleMax = 180;
-static int augerBottomPivotSpeedRef = 50;
+static uint16_t augerBottomPivotAngleMin = 0;
+static uint16_t augerBottomPivotAngleMax = 180;
+static uint16_t augerBottomPivotSpeedRef = 50;
 
-static int augerTopAngleMin = 0;
-static int augerTopAngleMax = 180;
-static int augerTopRefSpeed = 50;
+static uint16_t augerTopAngleMin = 0;
+static uint16_t augerTopAngleMax = 180;
+static uint16_t augerTopRefSpeed = 50;
 
-static int spoutTiltAngleMin = 0;
-static int spoutTiltAngleMax = 90;
-static int spoutTiltRefSpeed = 30;
+static uint16_t spoutTiltAngleMin = 0;
+static uint16_t spoutTiltAngleMax = 90;
+static uint16_t spoutTiltRefSpeed = 30;
 
-static int headRotationAngleMin = 0;
-static int headRotationAngleMax = 180;
-static int headRotationRefSpeed = 40;
+static uint16_t headRotationAngleMin = 0;
+static uint16_t headRotationAngleMax = 180;
+static uint16_t headRotationRefSpeed = 40;
 
-static int gateAngleMin = 0;
-static int gateAngleMax = 100;
-static int gateRefSpeed = 20;
+static uint16_t gateAngleMin = 0;
+static uint16_t gateAngleMax = 100;
+static uint16_t gateRefSpeed = 20;
 
-static int machineType = 0;
-static int frontWeight = 0;
-static int rearWeight = 0;
-
-// PWM values
-static uint8_t stmFeedbackByte = 0;
+static uint16_t machineType = 0;
+static uint16_t frontWeight = 0;
+static uint16_t rearWeight = 0;
 
 int sendDataToRedis(const std::string &hostname,
     int port,
@@ -419,15 +416,25 @@ int main() {
     while (true) {
         // Obtain PWM values and send them to redis
         sendPWMValuesToRedis("auger_bottom_pivot_up_pwm", 0x08);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("auger_bottom_pivot_down_pwm", 0x04);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("auger_top_unfold_pwm", 0x0B);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("auger_top_fold_pwm", 0x0A);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("spout_tilt_up_pwm", 0x01);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("spout_tilt_down_pwm", 0x03);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("head_rotation_cw_pwm", 0x06);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("head_rotation_ccw_pwm", 0x07);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("gate_open_pwm", 0x05);
+        usleep(MESSAGE_DELAY_US);
         sendPWMValuesToRedis("gate_close_pwm", 0x09);
+        usleep(MESSAGE_DELAY_US);
         // Tandem Float and Tandem Cutoff not done due to no redis values being made for them
 
         // Check heartbeat
@@ -456,7 +463,7 @@ int main() {
             
             rc = getDataFromRedis("127.0.0.1", 6379, "auger_bottom_pivot_angle", redisValue, "");
             if (rc == 0 && !redisValue.empty()) {
-                int newVal = std::atoi(redisValue.c_str());
+                uint16_t newVal = std::atoi(redisValue.c_str());
                 if (newVal != augerBottomPivotAngle) {
                     augerBottomPivotAngle = newVal;
                     writeDAC(fd_dac, 0, augerBottomPivotAngle);
@@ -465,7 +472,7 @@ int main() {
             
             rc = getDataFromRedis("127.0.0.1", 6379, "auger_top_angle", redisValue, "");
             if (rc == 0 && !redisValue.empty()) {
-                int newVal = std::atoi(redisValue.c_str());
+                uint16_t newVal = std::atoi(redisValue.c_str());
                 if (newVal != augerTopAngle) {
                     augerTopAngle = newVal;
                     writeDAC(fd_dac, 1, augerTopAngle);
@@ -474,7 +481,7 @@ int main() {
             
             rc = getDataFromRedis("127.0.0.1", 6379, "spout_tilt_angle", redisValue, "");
             if (rc == 0 && !redisValue.empty()) {
-                int newVal = std::atoi(redisValue.c_str());
+                uint16_t newVal = std::atoi(redisValue.c_str());
                 if (newVal != spoutTiltAngle) {
                     spoutTiltAngle = newVal;
                     writeDAC(fd_dac, 2, spoutTiltAngle);
@@ -483,7 +490,7 @@ int main() {
             
             rc = getDataFromRedis("127.0.0.1", 6379, "head_rotation_angle", redisValue, "");
             if (rc == 0 && !redisValue.empty()) {
-                int newVal = std::atoi(redisValue.c_str());
+                uint16_t newVal = std::atoi(redisValue.c_str());
                 if (newVal != headRotationAngle) {
                     headRotationAngle = newVal;
                     writeDAC(fd_dac, 3, headRotationAngle);
@@ -492,10 +499,40 @@ int main() {
 
             rc = getDataFromRedis("127.0.0.1", 6379, "gate_angle", redisValue, "");
             if (rc == 0 && !redisValue.empty()) {
-                int newVal = std::atoi(redisValue.c_str());
+                uint16_t newVal = std::atoi(redisValue.c_str());
                 if (newVal != gateAngle) {
                     gateAngle = newVal;
                     writeDAC(fd_dac, 0x04, gateAngle);
+                }
+            }
+
+            rc = getDataFromRedis("127.0.0.1", 6379, "front_weight", redisValue, "");
+            if (rc == 0 && !redisValue.empty()) {
+                uint16_t newVal = std::atoi(redisValue.c_str());
+                if (newVal != gateAngle) {
+                    frontWeight = newVal;
+                    uint16_t leftFrontWeight = frontWeight/2;
+                    uint16_t rightFrontWeight = frontWeight/2;
+                    unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+                    buildI2CMessage(stm_tx_buffer, false, 0x03, 0x00, 0x0000);
+                    writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                    buildI2CMessage(stm_tx_buffer, false, 0x03, 0x01, 0x0000);
+                    writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                }
+            }
+            
+            rc = getDataFromRedis("127.0.0.1", 6379, "rear_weight", redisValue, "");
+            if (rc == 0 && !redisValue.empty()) {
+                uint16_t newVal = std::atoi(redisValue.c_str());
+                if (newVal != gateAngle) {
+                    rearWeight = newVal;
+                    uint16_t leftRearWeight = rearWeight/2;
+                    uint16_t rightRearWeight = rearWeight/2;
+                    unsigned char stm_tx_buffer[STM_BUFFER_SIZE] = {0};
+                    buildI2CMessage(stm_tx_buffer, false, 0x03, 0x02, 0x0000);
+                    writeToSTM32(fd_stm32, stm_tx_buffer, 1);
+                    buildI2CMessage(stm_tx_buffer, false, 0x03, 0x03, 0x0000);
+                    writeToSTM32(fd_stm32, stm_tx_buffer, 1);
                 }
             }
 

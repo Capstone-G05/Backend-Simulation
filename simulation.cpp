@@ -30,10 +30,10 @@
  #define STM_BUFFER_SIZE 4
  #define DAC_TX_BUFFER_SIZE 3
  #define DAC_RX_BUFFER_SIZE 2
- #define MESSAGE_DELAY_US 10000
+ #define MESSAGE_DELAY_US 25000
  
- const char* redis_host = getenv("REDIS_HOST");
- const int redis_port = atoi(getenv("REDIS_PORT"));
+ const char* redis_host = "127.0.0.1";
+ const int redis_port = 6379;
  
  // DAC command masks
  const uint8_t DAC_WRITE_CMD_MASK = 0x00;  
@@ -119,7 +119,7 @@
  }
  
  int readFromSTM32(int file, unsigned char *buffer, size_t length) {
-     if (read(file, buffer, length) != (ssize_t)length) {
+     if (read(file, buffer, length) != length) {
          perror("Failed to read bytes from STM32");
          return -1;
      }
@@ -133,7 +133,7 @@
  }
  
  bool writeToSTM32(int file, unsigned char *bytes, size_t size) {
-     if (write(file, bytes, size) != (ssize_t)size) {
+     if (write(file, bytes, size) != size) {
          perror("Failed to write bytes to STM32");
          return false;
      }

@@ -294,7 +294,8 @@ void DACParse(uint8_t *buffer, uint16_t *message) {
 
 */
 int RedisConnect(redisContext *context, const char *hostname, uint16_t port) {
-  printf("test");
+  printf("Connecting to Redis...");
+
   context = redisConnect(hostname, port);
   if (context == nullptr || context->err) {
     if (context) {
@@ -306,7 +307,6 @@ int RedisConnect(redisContext *context, const char *hostname, uint16_t port) {
     }
     return -1;
   }
-  printf("test2");
   return 0;
 }
 
@@ -495,10 +495,12 @@ int main() {
   if ((i2c_fd = OpenI2CDevice()) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
+  printf("Initialized I2C device");
 
   if (RedisConnect(redis_context, redis_host, redis_port) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
+  printf("Initialized Redis connection");
 
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
     RedisRequest(angle_min, static_cast<AugerMovement>(i), "_ANGLE_MIN");

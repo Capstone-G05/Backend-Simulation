@@ -497,9 +497,11 @@ int main() {
   }
   printf("Initialized I2C device");
 
-//  if (RedisConnect(redis_context, redis_host, redis_port) < 0) {
-//    CleanupAndExit(EXIT_FAILURE);
-//  }
+  usleep(10000);
+
+  if (RedisConnect(redis_context, redis_host, redis_port) < 0) {
+    CleanupAndExit(EXIT_FAILURE);
+  }
   printf("Initialized Redis connection");
 
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {

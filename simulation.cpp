@@ -293,7 +293,7 @@ void DACParse(uint8_t *buffer, uint16_t *message) {
 /*
 
 */
-int RedisConnect(redisContext *context, char *hostname, uint16_t port) {
+int RedisConnect(redisContext *context, const char *hostname, uint16_t port) {
   context = redisConnect(hostname, port);
   if (context == nullptr || context->err) {
     if (context) {
@@ -494,7 +494,7 @@ int main() {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  if (RedisConnect(redis_host, redis_port) < 0)) {
+  if (RedisConnect(redis_context, redis_host, redis_port) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
 

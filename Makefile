@@ -1,26 +1,29 @@
+# Compiler and flags
 CXX = g++
+CXXFLAGS = -Wall -Wextra -std=c++17
+LDFLAGS = -lhiredis
 
-CXXFLAGS = -std=c++11 -Wall -Wextra -O2
-
-LIBS = -lhiredis
-
-TARGET = simulation
-
+# Source files
 SRCS = simulation.cpp
-
 OBJS = $(SRCS:.cpp=.o)
 
+# Output executable
+TARGET = simulation
+
+# Default target
 all: $(TARGET)
 
+# Compile source files
 $(TARGET): $(OBJS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LIBS)
+	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJS) $(LDFLAGS)
 
+# Compile object files
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-
+# Clean project
 clean:
 	rm -f $(OBJS) $(TARGET)
 
-run: $(TARGET)
-	./$(TARGET)
+# Rebuild
+rebuild: clean all

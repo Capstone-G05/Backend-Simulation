@@ -15,6 +15,7 @@
 
 /* DEFINES */
 
+#define LOCAL  // fro testing with no I2C bus
 #define DEBUG  // for printing debug statements
 
 #define I2C_DEVICE "/dev/i2c-1"
@@ -149,7 +150,7 @@ int RedisConnect(redisContext*, char*, uint16_t);
 int RedisSet(redisContext*, const char*, const char*);
 int RedisGet(redisContext*, const char*, char*);
 
-void RedisRequest(uint16_t*, AugerMovement, const char*);
+void RedisRequest(uint16_t*, uint8_t, const char*);
 void STM32Update(const char*, uint8_t, uint8_t);
 void DACUpdate(const char*, uint8_t);
 void WeightUpdate(void);
@@ -199,6 +200,9 @@ void HandleSigint(int sig) {
 
 */
 int OpenI2CDevice(void) {
+#ifdef LOCAL
+  return 0;
+#endif
   int fd = open(I2C_DEVICE, O_RDWR);
   if (fd < 0) {
     perror("Failed to open I2C bus");
@@ -211,6 +215,9 @@ int OpenI2CDevice(void) {
 
 */
 int SetI2CAddress(int fd, uint8_t address) {
+#ifdef LOCAL
+  return 0;
+#endif
   if (ioctl(fd, I2C_SLAVE, address) < 0) {
     perror("Failed to set I2C address");
     return -1;
@@ -222,6 +229,9 @@ int SetI2CAddress(int fd, uint8_t address) {
 
 */
 int I2CWrite(int fd, uint8_t *buffer, ssize_t length) {
+#ifdef LOCAL
+  return 0;
+#endif
   if (write(fd, buffer, length) != length) {
     perror("Failed I2C write");
     return -1;
@@ -240,6 +250,9 @@ int I2CWrite(int fd, uint8_t *buffer, ssize_t length) {
 
 */
 int I2CRead(int fd, uint8_t *buffer, ssize_t length) {
+#ifdef LOCAL
+  return 0;
+#endif
   if (read(fd, buffer, length) != length) {
     perror("Failed I2C read");
     return -1;
@@ -293,13 +306,11 @@ void DACParse(uint8_t *buffer, uint16_t *message) {
 /*
 
 */
-int RedisConnect(redisContext *context, const char *hostname, uint16_t port) {
-  printf("Connecting to Redis...");
-
-  context = redisConnect(hostname, port);
-  if (context == nullptr || context->err) {
-    if (context) {
-      printf("ERROR: %s\n", context->errstr);
+int RedisConnect(redisContext **context, const char *hostname, uint16_t port) {
+  *context = redisConnect(hostname, port);
+  if (*context == nullptr || (*context)->err) {
+    if (*context) {
+      printf("ERROR: %s\n", (*context)->errstr);
       CleanupAndExit(EXIT_FAILURE);
     } else {
       printf("Can't allocate redis context\n");
@@ -314,6 +325,10 @@ int RedisConnect(redisContext *context, const char *hostname, uint16_t port) {
 
 */
 int RedisSet(redisContext *context, const char *key, const char *value) {
+  if (context == nullptr) {
+    perror("NULL context pointer");
+    return -1;
+  }
   redisReply *reply = (redisReply *)redisCommand(context, "SET %s %s", key, value);
   if (!reply) {
     printf("ERROR: %s\n", context->errstr);
@@ -332,6 +347,10 @@ int RedisSet(redisContext *context, const char *key, const char *value) {
 
 */
 int RedisGet(redisContext *context, const char *key, char *value) {
+  if (context == nullptr) {
+    perror("NULL context pointer");
+    return -1;
+  }
   redisReply *reply = (redisReply *)redisCommand(context, "GET %s", key);
   if (!reply) {
     printf("ERROR: %s\n", context->errstr);
@@ -354,7 +373,7 @@ int RedisGet(redisContext *context, const char *key, char *value) {
 /*
 
 */
-void RedisRequest(uint16_t *data, AugerMovement movement, const char *type) {
+void RedisRequest(uint16_t *data, uint8_t movement, const char *type) {
   char redis_key[MAX_STRING_LENGTH];
   char redis_value[MAX_STRING_LENGTH] = {0};
 
@@ -495,22 +514,18 @@ int main() {
   if ((i2c_fd = OpenI2CDevice()) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
-  printf("Initialized I2C device");
+  printf("Initialized I2C device\n");
 
-  usleep(10000);
-
-  if (RedisConnect(redis_context, redis_host, redis_port) < 0) {
+  if (RedisConnect(&redis_context, redis_host, redis_port) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
-  printf("Initialized Redis connection");
+  printf("Initialized Redis connection\n");
 
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
-    RedisRequest(angle_min, static_cast<AugerMovement>(i), "_ANGLE_MIN");
-    RedisRequest(angle_max, static_cast<AugerMovement>(i), "_ANGLE_MAX");
-    RedisRequest(speed_ref, static_cast<AugerMovement>(i), "_SPEED_REF");
+    RedisRequest(angle_min, i, "_ANGLE_MIN");
+    RedisRequest(angle_max, i, "_ANGLE_MAX");
+    RedisRequest(speed_ref, i, "_SPEED_REF");
   }
-
-  printf("test1\n");
 
   char redis_value[MAX_STRING_LENGTH] = {0};
 
@@ -523,6 +538,8 @@ int main() {
     CleanupAndExit(EXIT_FAILURE);
   }
   weight[REAR] = atoi(redis_value);
+
+  printf("Retrieved initial angle data\n");
 
   while (true) {
 

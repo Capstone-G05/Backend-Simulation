@@ -356,7 +356,9 @@ void RedisRequest(uint16_t *data, AugerMovement movement, const char *type) {
   char redis_key[MAX_STRING_LENGTH];
   char redis_value[MAX_STRING_LENGTH] = {0};
 
+  printf("test2\n");
   snprintf(redis_key, sizeof(redis_key), "%s%s", AugerMovementNames[movement], type);
+  printf("test3\n");
   if (RedisGet(redis_context, redis_key, redis_value) < 0) {
     perror("Failed to read Redis");
   }
@@ -494,13 +496,13 @@ int main() {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  printf("test\n");
-
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
     RedisRequest(angle_min, static_cast<AugerMovement>(i), "_ANGLE_MIN");
     RedisRequest(angle_max, static_cast<AugerMovement>(i), "_ANGLE_MAX");
     RedisRequest(speed_ref, static_cast<AugerMovement>(i), "_SPEED_REF");
   }
+
+  printf("test1\n");
 
   char redis_value[MAX_STRING_LENGTH] = {0};
 

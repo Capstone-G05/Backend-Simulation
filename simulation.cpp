@@ -356,9 +356,7 @@ void RedisRequest(uint16_t *data, AugerMovement movement, const char *type) {
   char redis_key[MAX_STRING_LENGTH];
   char redis_value[MAX_STRING_LENGTH] = {0};
 
-  printf("test2\n");
   snprintf(redis_key, sizeof(redis_key), "%s%s", AugerMovementNames[movement], type);
-  printf("test3\n");
   if (RedisGet(redis_context, redis_key, redis_value) < 0) {
     perror("Failed to read Redis");
   }
@@ -493,6 +491,10 @@ int main() {
   signal(SIGINT, HandleSigint);
 
   if ((i2c_fd = OpenI2CDevice()) < 0) {
+    CleanupAndExit(EXIT_FAILURE);
+  }
+
+  if (RedisConnect(redis_host, redis_port) < 0)) {
     CleanupAndExit(EXIT_FAILURE);
   }
 

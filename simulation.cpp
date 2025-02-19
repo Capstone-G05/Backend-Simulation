@@ -494,6 +494,8 @@ int main() {
     CleanupAndExit(EXIT_FAILURE);
   }
 
+  printf("test\n");
+
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
     RedisRequest(angle_min, static_cast<AugerMovement>(i), "_ANGLE_MIN");
     RedisRequest(angle_max, static_cast<AugerMovement>(i), "_ANGLE_MAX");

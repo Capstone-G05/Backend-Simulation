@@ -78,17 +78,17 @@ typedef struct {
 } DACParameter;
 
 const STM32Parameter stm32_parameters[] = {
-  {"PIVOT_UP",     0x02, 0x08},
-  {"PIVOT_DOWN",   0x02, 0x04},
-  {"AUGER_FOLD",   0x02, 0x0A},
-  {"AUGER_UNFOLD", 0x02, 0x0B},
-  {"TILT_UP",      0x02, 0x01},
-  {"TILT_DOWN",    0x02, 0x03},
-  {"ROTATE_CW",    0x02, 0x06},
-  {"ROTATE_CCW",   0x02, 0x07},
-  {"GATE_OPEN",    0x02, 0x05},
-  {"GATE_CLOSE",   0x02, 0x09},
-  {"ONLINE",       0x04, 0x00},
+  {"PIVOT_UP_PWM",   0x02, 0x08},
+  {"PIVOT_DOWN_PWM", 0x02, 0x04},
+  {"FOLD_IN_PWM",    0x02, 0x0A},
+  {"FOLD_OUT_PWM",   0x02, 0x0B},
+  {"TILT_UP_PWM",    0x02, 0x01},
+  {"TILT_DOWN_PWM",  0x02, 0x03},
+  {"ROTATE_CW_PWM",  0x02, 0x06},
+  {"ROTATE_CCW_PWM", 0x02, 0x07},
+  {"GATE_OPEN_PWM",  0x02, 0x05},
+  {"GATE_CLOSE_PWM", 0x02, 0x09},
+  {"ONLINE",         0x04, 0x00},
 };
 
 const DACParameter dac_parameters[] = {

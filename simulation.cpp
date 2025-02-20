@@ -555,7 +555,7 @@ int main() {
 
     WeightUpdate();
 
-    STM32Request("PTO_SPEED", 0x01, 0x01);
+    STM32Update("PTO_SPEED", 0x01, 0x01);
 
       // TODO: crop fill rate
   }

@@ -5,4 +5,4 @@ make clean
 make
 
 # start the simulation
-./simulation
+./simulation 2>&1

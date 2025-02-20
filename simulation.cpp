@@ -410,7 +410,7 @@ void STM32Request(const char *key, uint8_t type, uint8_t index) {
 /*
 
 */
-void STM32Update(char *key, uint8_t type, uint8_t index) {
+void STM32Update(const char *key, uint8_t type, uint8_t index) {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
   char redis_value[MAX_STRING_LENGTH] = {0};

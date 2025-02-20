@@ -508,6 +508,7 @@ void DACUpdate(const char *key, uint8_t index) {
 
 
 int main() {
+  setbuf(stdout, NULL); // Disable buffering
   printf("~ Starting Simulation ~\n");
   signal(SIGINT, HandleSigint);
 

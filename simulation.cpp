@@ -502,7 +502,8 @@ void DACUpdate(const char *key, uint8_t index) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  printf("DAC %d", atoi(redis_value));
+  uint16_t angle_voltage = (uint16_t)((float(atoi(redis_value)) / 360.0) * 1000);
+
   DACPack(tx_buffer, index, atoi(redis_value), DAC_WRITE_CMD_MASK);
   I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }

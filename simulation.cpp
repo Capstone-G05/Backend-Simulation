@@ -502,6 +502,7 @@ void DACUpdate(const char *key, uint8_t index) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
+  printf("DAC %d", atoi(redis_value));
   DACPack(tx_buffer, index, atoi(redis_value), DAC_WRITE_CMD_MASK);
   I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
@@ -549,7 +550,7 @@ int main() {
       usleep(POLLING_INTERVAL_US);
     }
 
-    for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
+    for (size_t i = 0; i < DAC_PARAMETERS_SIZE; i++) {
       DACUpdate(dac_parameters[i].key, dac_parameters[i].index);
       usleep(POLLING_INTERVAL_US);
     }

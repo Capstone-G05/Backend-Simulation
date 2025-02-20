@@ -15,7 +15,7 @@
 
 /* DEFINES */
 
-//#define LOCAL  // for testing with no I2C bus
+#define LOCAL  // for testing with no I2C bus
 #define DEBUG  // for printing debug statements
 
 #define I2C_DEVICE "/dev/i2c-1"

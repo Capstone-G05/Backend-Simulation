@@ -114,7 +114,6 @@ const size_t STM32_PARAMETERS_SIZE = sizeof(stm32_parameters) / sizeof(STM32Para
 const size_t DAC_PARAMETERS_SIZE = sizeof(dac_parameters) / sizeof(DACParameter);
 
 int i2c_fd = -1;
-int dac_fd = -1;
 redisContext *redis_context = nullptr;
 
 const char *redis_host_env = getenv("REDIS_HOST");
@@ -520,14 +519,14 @@ void WeightUpdate(uint16_t amount_time) {
 void DACConfig(void){
     uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
 
-    if (SetI2CAddress(dac_fd, DAC_I2C_ADDRESS) < 0){
+    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
         CleanupAndExit(EXIT_FAILURE);
     }
 
     uint16_t vref_mode = 0x10;
   
     DACPack(tx_buffer, 0x08, vref_mode, DAC_WRITE_CMD_MASK);
-    I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
 
 
@@ -538,7 +537,7 @@ void DACUpdate(const char *key, uint8_t index) {
     uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
     char redis_value[MAX_STRING_LENGTH] = {0};
 
-    if (SetI2CAddress(dac_fd, DAC_I2C_ADDRESS) < 0){
+    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
         CleanupAndExit(EXIT_FAILURE);
     }
 
@@ -555,7 +554,7 @@ void DACUpdate(const char *key, uint8_t index) {
     uint16_t angle_voltage = (uint16_t)((float(angle) / 360.0) * 1023); 
 
     DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
-    I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
 
 

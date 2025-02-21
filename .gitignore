@@ -1,2 +1,5 @@
 *.o
 simulation
+dac_utility
+stm32_monitor
+stm32_utility

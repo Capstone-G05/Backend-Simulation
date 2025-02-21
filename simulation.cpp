@@ -156,6 +156,7 @@ int RedisGet(redisContext*, const char*, char*);
 
 void RedisRequest(uint16_t*, uint8_t, const char*);
 void STM32Update(const char*, uint8_t, uint8_t);
+void DACConfig(void);
 void DACUpdate(const char*, uint8_t);
 void WeightUpdate(void);
 
@@ -537,6 +538,10 @@ void DACUpdate(const char *key, uint8_t index) {
     uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
     char redis_value[MAX_STRING_LENGTH] = {0};
 
+    if (SetI2CAddress(dac_fd, DAC_I2C_ADDRESS) < 0){
+        CleanupAndExit(EXIT_FAILURE);
+    }
+
     if (RedisGet(redis_context, key, redis_value) < 0) {
         CleanupAndExit(EXIT_FAILURE);
     }
@@ -587,6 +592,8 @@ int main() {
     CleanupAndExit(EXIT_FAILURE);
   }
   weight[REAR] = atoi(redis_value);
+
+  DACConfig();
 
   printf("Retrieved initial angle data\n");
 

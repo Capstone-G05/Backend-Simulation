@@ -26,6 +26,7 @@
 #define DAC_MAX_REGISTER   0x1F
 #define DAC_WRITE_CMD_MASK 0x00
 #define DAC_READ_CMD_MASK  0x06
+#define DAC_VREF_MODE      0x10
 
 #define STM32_TX_BUFFER_SIZE 4
 #define STM32_RX_BUFFER_SIZE 4
@@ -122,10 +123,14 @@ const char *redis_port_env = getenv("REDIS_PORT");
 const char *redis_host = redis_host_env ? redis_host_env : "localhost";
 const uint16_t redis_port = redis_port_env ? atoi(redis_port_env) : 6379;
 
-uint16_t angle[NUM_AUGER_MOVEMENTS];
-uint16_t angle_min[NUM_AUGER_MOVEMENTS];
-uint16_t angle_max[NUM_AUGER_MOVEMENTS];
-uint16_t speed_ref[NUM_AUGER_MOVEMENTS];
+const uint16_t ANGLE_CENTER = 180;
+
+int16_t angle[NUM_AUGER_MOVEMENTS];
+int16_t angle_min[NUM_AUGER_MOVEMENTS];
+int16_t angle_max[NUM_AUGER_MOVEMENTS];
+int16_t angle_range[NUM_AUGER_MOVEMENTS];
+int16_t angle_start[NUM_AUGER_MOVEMENTS];
+int16_t speed_ref[NUM_AUGER_MOVEMENTS];
 uint16_t weight[NUM_WEIGHT_LOCATIONS];
 
 uint16_t pto_speed = 0;
@@ -153,10 +158,10 @@ int RedisConnect(redisContext*, char*, uint16_t);
 int RedisSet(redisContext*, const char*, const char*);
 int RedisGet(redisContext*, const char*, char*);
 
-void RedisRequest(uint16_t*, uint8_t, const char*);
+void RedisRequest(int16_t*, uint8_t, const char*);
 void STM32Update(const char*, uint8_t, uint8_t);
 void DACConfig(void);
-void DACUpdate(const char*, uint8_t);
+void DACUpdate(const char*, uint8_t, uint8_t);
 void WeightUpdate(void);
 
 /* FUNCTION IMPLEMENTATIONS */
@@ -377,7 +382,7 @@ int RedisGet(redisContext *context, const char *key, char *value) {
 /*
 
 */
-void RedisRequest(uint16_t *data, uint8_t movement, const char *type) {
+void RedisRequest(int16_t *data, uint8_t movement, const char *type) {
   char redis_key[MAX_STRING_LENGTH];
   char redis_value[MAX_STRING_LENGTH] = {0};
 
@@ -522,10 +527,8 @@ void DACConfig(void){
     if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
         CleanupAndExit(EXIT_FAILURE);
     }
-
-    uint16_t vref_mode = 0x10;
   
-    DACPack(tx_buffer, 0x08, vref_mode, DAC_WRITE_CMD_MASK);
+    DACPack(tx_buffer, 0x08, DAC_VREF_MODE, DAC_WRITE_CMD_MASK);
     I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
 
@@ -533,7 +536,7 @@ void DACConfig(void){
 /*
 
 */
-void DACUpdate(const char *key, uint8_t index) {
+void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
     uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
     char redis_value[MAX_STRING_LENGTH] = {0};
 
@@ -545,18 +548,18 @@ void DACUpdate(const char *key, uint8_t index) {
         CleanupAndExit(EXIT_FAILURE);
     }
 
-    int angle = atoi(redis_value);
+    angle[movement] = atoi(redis_value);
+    int16_t absolute_angle = angle[movement] - angle_min[movement];
+    int16_t adjusted_angle = angle_start[movement] + absolute_angle;
+    uint16_t angle_voltage = (uint16_t)((float(adjusted_angle) / 360.0) * 1023);
 
-    if (angle < 0) {
-        angle = (angle % 360 + 360) % 360;
-    }
-
-    uint16_t angle_voltage = (uint16_t)((float(angle) / 360.0) * 1023); 
+#ifdef DEBUG
+    printf("%d: ANGLE=%d MIN=%d MAX=%d RANGE=%d START=%d ABS=%d ADJ=%d VOLT=%d\n", index, angle[movement], angle_min[movement], angle_max[movement], angle_range[movement], angle_start[movement], absolute_angle, adjusted_angle, angle_voltage);
+#endif
 
     DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
     I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
-
 
 
 int main() {
@@ -578,6 +581,8 @@ int main() {
     RedisRequest(angle_min, i, "_ANGLE_MIN");
     RedisRequest(angle_max, i, "_ANGLE_MAX");
     RedisRequest(speed_ref, i, "_SPEED_REF");
+    angle_range[i] = angle_max[i] - angle_min[i];
+    angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
   }
 
   char redis_value[MAX_STRING_LENGTH] = {0};
@@ -607,7 +612,7 @@ int main() {
     }
 
     for (size_t i = 0; i < DAC_PARAMETERS_SIZE; i++) {
-      DACUpdate(dac_parameters[i].key, dac_parameters[i].index);
+      DACUpdate(dac_parameters[i].key, i, dac_parameters[i].index);
       usleep(POLLING_INTERVAL_US);
     }
 

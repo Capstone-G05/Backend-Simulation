@@ -534,18 +534,25 @@ void DACConfig(void){
 
 */
 void DACUpdate(const char *key, uint8_t index) {
-  uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
-  char redis_value[MAX_STRING_LENGTH] = {0};
+    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
+    char redis_value[MAX_STRING_LENGTH] = {0};
 
-  if (RedisGet(redis_context, key, redis_value) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
+    if (RedisGet(redis_context, key, redis_value) < 0) {
+        CleanupAndExit(EXIT_FAILURE);
+    }
 
-  uint16_t angle_voltage = (uint16_t)((float(atoi(redis_value)) / 360.0) * 1023); 
+    int angle = atoi(redis_value);
 
-  DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
-  I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+    if (angle < 0) {
+        angle = (angle % 360 + 360) % 360;
+    }
+
+    uint16_t angle_voltage = (uint16_t)((float(angle) / 360.0) * 1023); 
+
+    DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
+    I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
+
 
 
 int main() {

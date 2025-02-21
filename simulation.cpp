@@ -1,5 +1,6 @@
 #include <iostream>
 #include <string>
+#include <time.h>
 #include <cstdint>
 #include <unistd.h>
 #include <cerrno>
@@ -107,11 +108,13 @@ const char *AugerMovementNames[] = {
 };
 
 /* PRIVATE VARIABLES */
+clock_t start, end;
 
 const size_t STM32_PARAMETERS_SIZE = sizeof(stm32_parameters) / sizeof(STM32Parameter);
 const size_t DAC_PARAMETERS_SIZE = sizeof(dac_parameters) / sizeof(DACParameter);
 
 int i2c_fd = -1;
+int dac_fd = -1;
 redisContext *redis_context = nullptr;
 
 const char *redis_host_env = getenv("REDIS_HOST");
@@ -128,6 +131,7 @@ uint16_t weight[NUM_WEIGHT_LOCATIONS];
 
 uint16_t pto_speed = 0;
 uint16_t crop_fill_rate = 0;
+uint16_t pto_flow_rate = 0;
 
 /* FUNCTION PROTOTYPES */
 
@@ -432,27 +436,45 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
 /*
 
 */
-void WeightUpdate(void) {
+void WeightUpdate(uint16_t amount_time) {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
   char redis_value[MAX_STRING_LENGTH] = {0};
+  uint16_t weight_front = 0;
+  uint16_t weight_rear = 0;
+  uint16_t weight_removed = 0;
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
+  if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){
+    CleanupAndExit(EXIT_FAILURE);
+  }
+  pto_speed = atoi(redis_value);
+
+  if (RedisGet(redis_context, "PTO_FLOW_RATE", redis_value) < 0){
+    CleanupAndExit(EXIT_FAILURE);
+  }
+  pto_flow_rate = atoi(redis_value);
+
+  weight_removed = ((pto_speed*pto_flow_rate)/3600)*amount_time;
+
   if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x00, atoi(redis_value) / 2);
+  // Calculate the new front weight
+  weight_front = (atoi(redis_value) - (weight_removed / 2)) / 2;
+
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
 
   usleep(I2C_MESSAGE_DELAY_US);
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x01, atoi(redis_value) / 2);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x01, weight_front);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
@@ -463,14 +485,17 @@ void WeightUpdate(void) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x02, atoi(redis_value) / 2);
+  // Calculate the new rear weight
+  weight_rear = (atoi(redis_value) - (weight_removed / 2)) / 2;
+
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
 
   usleep(I2C_MESSAGE_DELAY_US);
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x03, atoi(redis_value) / 2);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x03, weight_rear);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
@@ -487,6 +512,24 @@ void WeightUpdate(void) {
   usleep(I2C_MESSAGE_DELAY_US);
 }
 
+
+/*
+
+*/
+void DACConfig(void){
+    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
+
+    if (SetI2CAddress(dac_fd, DAC_I2C_ADDRESS) < 0){
+        CleanupAndExit(EXIT_FAILURE);
+    }
+
+    uint16_t vref_mode = 0x10;
+  
+    DACPack(tx_buffer, 0x08, vref_mode, DAC_WRITE_CMD_MASK);
+    I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+}
+
+
 /*
 
 */
@@ -498,14 +541,10 @@ void DACUpdate(const char *key, uint8_t index) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
-
-  uint16_t angle_voltage = (uint16_t)((float(atoi(redis_value)) / 360.0) * 1000);
+  uint16_t angle_voltage = (uint16_t)((float(atoi(redis_value)) / 360.0) * 1023); 
 
   DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
-  I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+  I2CWrite(dac_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
 
 
@@ -544,7 +583,10 @@ int main() {
 
   printf("Retrieved initial angle data\n");
 
+  uint16_t previousTime = 0;
   while (true) {
+    printf("The time it took the while loop was {%d}", previousTime);
+    start = clock();
 
     for (size_t i = 0; i < STM32_PARAMETERS_SIZE; i++) {
       STM32Request(stm32_parameters[i].key, stm32_parameters[i].type, stm32_parameters[i].index);
@@ -556,11 +598,11 @@ int main() {
       usleep(POLLING_INTERVAL_US);
     }
 
-    WeightUpdate();
-
     STM32Update("PTO_SPEED", 0x01, 0x01);
 
-      // TODO: crop fill rate
+    end = clock();
+    previousTime = ((uint16_t) (end - start)) / CLOCKS_PER_SEC;
+    WeightUpdate(previousTime);
   }
   RedisSet(redis_context, "ONLINE", "0");
   CleanupAndExit(EXIT_SUCCESS);

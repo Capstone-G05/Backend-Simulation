@@ -543,7 +543,7 @@ int main() {
   }
   printf("Initialized Redis connection\n");
 
-  DACConfig();
+//  DACConfig();
   gettimeofday(&time_stamp,NULL);
 
   printf("starting main loop\n");

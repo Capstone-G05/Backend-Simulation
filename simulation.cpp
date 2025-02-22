@@ -455,9 +455,16 @@ void WeightUpdate() {
   if (pto_speed > 0 && pto_flow_rate > 0) {
     weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
     if (weight_removed > 0) {
-      // TODO: handle front/back logic if one is empty but not the other
-      weight_front -= weight_removed / 4;
-      weight_rear -= weight_removed / 4;
+      if (weight_front < (weight_removed / 4)) {
+        weight_front = 0;
+      } else {
+        weight_front -= weight_removed / 4;
+      }
+      if (weight_rear < (weight_removed / 4)) {
+        weight_rear = 0;
+      } else {
+        weight_rear -= weight_removed / 4;
+      }
     }
   }
 

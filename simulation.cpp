@@ -387,7 +387,7 @@ int RedisGet(redisContext *context, const char *key, char *value) {
 */
 void RedisRequest(int16_t *data, uint8_t movement, const char *type) {
   char redis_key[MAX_STRING_LENGTH];
-  char redis_value[MAX_STRING_LENGTH] = {0};
+  char redis_value[MAX_STRING_LENGTH];
 
   snprintf(redis_key, sizeof(redis_key), "%s%s", AugerMovementNames[movement], type);
   if (RedisGet(redis_context, redis_key, redis_value) < 0) {
@@ -425,7 +425,7 @@ void STM32Request(const char *key, uint8_t type, uint8_t index) {
 void STM32Update(const char *key, uint8_t type, uint8_t index) {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
-  char redis_value[MAX_STRING_LENGTH] = {0};
+  char redis_value[MAX_STRING_LENGTH];
 
   if (RedisGet(redis_context, key, redis_value) < 0) {
     CleanupAndExit(EXIT_FAILURE);
@@ -447,10 +447,29 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
 void WeightUpdate() {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
+  char redis_string[MAX_STRING_LENGTH];
 
-  uint16_t weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
-  uint16_t weight_front = (weight[FRONT] - (weight_removed / 2)) / 2;
-  uint16_t weight_rear = (weight[REAR] - (weight_removed / 2)) / 2;
+  uint16_t weight_removed = 0;
+  uint16_t weight_front = weight[FRONT];
+  uint16_t weight_rear = weight[REAR];
+  if (pto_speed > 0 && pto_flow_rate > 0) {
+    weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
+    if (weight_removed > 0) {
+      // TODO: handle front/back logic if one is empty but not the other
+      weight_front -= weight_removed / 4;
+      weight_rear -= weight_removed / 4;
+    }
+  }
+
+#ifdef DEBUG
+  printf("PTO: SPEED=%d RATE=%d\n", pto_speed, pto_flow_rate);
+  printf("WEIGHT: REMOVED=%d FRONT=%d REAR=%d\n", weight_removed, weight_front, weight_rear);
+#endif
+
+  sprintf(redis_string, "%u", weight_front);
+  RedisSet(redis_context, "WEIGHT_FRONT", redis_string);
+  sprintf(redis_string, "%u", weight_rear);
+  RedisSet(redis_context, "WEIGHT_REAR", redis_string);
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
     CleanupAndExit(EXIT_FAILURE);
@@ -498,13 +517,12 @@ void DACConfig(void){
     I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
 }
 
-
 /*
 
 */
 void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
     uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
-    char redis_value[MAX_STRING_LENGTH] = {0};
+    char redis_value[MAX_STRING_LENGTH];
 
     if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
         CleanupAndExit(EXIT_FAILURE);
@@ -543,17 +561,20 @@ int main() {
   }
   printf("Initialized Redis connection\n");
 
-//  DACConfig();
+  // DACConfig(); // TODO: there may be a bug here (pivot -> 5V), not sure...
   gettimeofday(&time_stamp,NULL);
 
   printf("starting main loop\n");
-  char redis_value[MAX_STRING_LENGTH] = {0};
+  char redis_value[MAX_STRING_LENGTH];
   while (true) {
     struct timeval next_time_stamp;
     gettimeofday(&next_time_stamp,NULL);
     time_elapsed_ms = ((next_time_stamp.tv_sec - time_stamp.tv_sec) * 1000) + ((next_time_stamp.tv_usec - time_stamp.tv_usec) / 1000);
-    printf("Time Elapsed: %dms\n", time_elapsed_ms);
     time_stamp = next_time_stamp;
+
+#ifdef DEBUG
+    printf("Time Elapsed: %dms\n", time_elapsed_ms);
+#endif
 
     for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
       RedisRequest(angle_min, i, "_ANGLE_MIN");
@@ -583,6 +604,9 @@ int main() {
     }
     weight[REAR] = atoi(redis_value);
 
+    WeightUpdate();
+    STM32Update("PTO_SPEED", 0x01, 0x01);
+
     for (size_t i = 0; i < STM32_PARAMETERS_SIZE; i++) {
       STM32Request(stm32_parameters[i].key, stm32_parameters[i].type, stm32_parameters[i].index);
     }
@@ -590,9 +614,6 @@ int main() {
     for (size_t i = 0; i < DAC_PARAMETERS_SIZE; i++) {
       DACUpdate(dac_parameters[i].key, i, dac_parameters[i].index);
     }
-
-    STM32Update("PTO_SPEED", 0x01, 0x01);
-    WeightUpdate();
   }
   RedisSet(redis_context, "ONLINE", "0");
   CleanupAndExit(EXIT_SUCCESS);

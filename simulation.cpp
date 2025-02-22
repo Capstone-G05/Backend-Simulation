@@ -37,7 +37,6 @@
 #define MAX_STRING_LENGTH 50
 
 #define I2C_MESSAGE_DELAY_US 10000
-#define POLLING_INTERVAL_US  100000
 
 /* TYPEDEFS */
 
@@ -448,63 +447,34 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
 void WeightUpdate() {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
-  char redis_value[MAX_STRING_LENGTH] = {0};
+
+  uint16_t weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
+  uint16_t weight_front = (weight[FRONT] - (weight_removed / 2)) / 2;
+  uint16_t weight_rear = (weight[REAR] - (weight_removed / 2)) / 2;
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
-
-  if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){
-    CleanupAndExit(EXIT_FAILURE);
-  }
-  pto_speed = atoi(redis_value);
-
-  if (RedisGet(redis_context, "PTO_FLOW_RATE", redis_value) < 0){
-    CleanupAndExit(EXIT_FAILURE);
-  }
-  pto_flow_rate = atoi(redis_value);
-
-  uint16_t weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
-
-  if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
-
-  uint16_t weight_front = (atoi(redis_value) - (weight_removed / 2)) / 2;
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
 
-  usleep(I2C_MESSAGE_DELAY_US);
-
   STM32Pack(tx_buffer, WRITE, 0x03, 0x01, weight_front);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
-
-  usleep(I2C_MESSAGE_DELAY_US);
-
-  if (RedisGet(redis_context, "WEIGHT_REAR", redis_value) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
-
-  uint16_t weight_rear = (atoi(redis_value) - (weight_removed / 2)) / 2;
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
 
-  usleep(I2C_MESSAGE_DELAY_US);
-
   STM32Pack(tx_buffer, WRITE, 0x03, 0x03, weight_rear);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
-
-  usleep(I2C_MESSAGE_DELAY_US);
 
   // TODO: handle hitch weight
 
@@ -512,8 +482,6 @@ void WeightUpdate() {
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
   usleep(I2C_MESSAGE_DELAY_US);
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
-
-  usleep(I2C_MESSAGE_DELAY_US);
 }
 
 /*
@@ -561,7 +529,7 @@ void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
 
 
 int main() {
-  setbuf(stdout, NULL); // Disable buffering
+  setbuf(stdout, NULL); // disable buffering
   printf("~ Starting Simulation ~\n");
   signal(SIGINT, HandleSigint);
 
@@ -575,30 +543,11 @@ int main() {
   }
   printf("Initialized Redis connection\n");
 
-  for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
-    RedisRequest(angle_min, i, "_ANGLE_MIN");
-    RedisRequest(angle_max, i, "_ANGLE_MAX");
-    RedisRequest(speed_ref, i, "_SPEED_REF");
-    angle_range[i] = angle_max[i] - angle_min[i];
-    angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
-  }
-
-  char redis_value[MAX_STRING_LENGTH] = {0};
-
-  if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
-  weight[FRONT] = atoi(redis_value);
-
-  if (RedisGet(redis_context, "WEIGHT_REAR", redis_value) < 0) {
-    CleanupAndExit(EXIT_FAILURE);
-  }
-  weight[REAR] = atoi(redis_value);
-
   DACConfig();
   gettimeofday(&time_stamp,NULL);
 
   printf("starting main loop\n");
+  char redis_value[MAX_STRING_LENGTH] = {0};
   while (true) {
     struct timeval next_time_stamp;
     gettimeofday(&next_time_stamp,NULL);
@@ -606,14 +555,40 @@ int main() {
     printf("Time Elapsed: %dms\n", time_elapsed_ms);
     time_stamp = next_time_stamp;
 
+    for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
+      RedisRequest(angle_min, i, "_ANGLE_MIN");
+      RedisRequest(angle_max, i, "_ANGLE_MAX");
+      RedisRequest(speed_ref, i, "_SPEED_REF");
+      angle_range[i] = angle_max[i] - angle_min[i];
+      angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
+    }
+
+    if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){
+      CleanupAndExit(EXIT_FAILURE);
+    }
+    pto_speed = atoi(redis_value);
+
+    if (RedisGet(redis_context, "PTO_FLOW_RATE", redis_value) < 0){
+      CleanupAndExit(EXIT_FAILURE);
+    }
+    pto_flow_rate = atoi(redis_value);
+
+    if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
+      CleanupAndExit(EXIT_FAILURE);
+    }
+    weight[FRONT] = atoi(redis_value);
+
+    if (RedisGet(redis_context, "WEIGHT_REAR", redis_value) < 0) {
+      CleanupAndExit(EXIT_FAILURE);
+    }
+    weight[REAR] = atoi(redis_value);
+
     for (size_t i = 0; i < STM32_PARAMETERS_SIZE; i++) {
       STM32Request(stm32_parameters[i].key, stm32_parameters[i].type, stm32_parameters[i].index);
-      usleep(POLLING_INTERVAL_US);
     }
 
     for (size_t i = 0; i < DAC_PARAMETERS_SIZE; i++) {
       DACUpdate(dac_parameters[i].key, i, dac_parameters[i].index);
-      usleep(POLLING_INTERVAL_US);
     }
 
     STM32Update("PTO_SPEED", 0x01, 0x01);

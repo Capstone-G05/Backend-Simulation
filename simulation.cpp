@@ -11,6 +11,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <sys/time.h>
 #include <linux/i2c-dev.h>
 #include <hiredis/hiredis.h>
 
@@ -136,6 +137,9 @@ uint16_t weight[NUM_WEIGHT_LOCATIONS];
 uint16_t pto_speed = 0;
 uint16_t crop_fill_rate = 0;
 uint16_t pto_flow_rate = 0;
+
+struct timeval time_stamp;
+uint32_t time_elapsed_ms;
 
 /* FUNCTION PROTOTYPES */
 
@@ -441,13 +445,10 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
 /*
 
 */
-void WeightUpdate(uint16_t amount_time) {
+void WeightUpdate() {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
   char redis_value[MAX_STRING_LENGTH] = {0};
-  uint16_t weight_front = 0;
-  uint16_t weight_rear = 0;
-  uint16_t weight_removed = 0;
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
     CleanupAndExit(EXIT_FAILURE);
@@ -463,14 +464,13 @@ void WeightUpdate(uint16_t amount_time) {
   }
   pto_flow_rate = atoi(redis_value);
 
-  weight_removed = ((pto_speed*pto_flow_rate)/3600)*amount_time;
+  uint16_t weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
 
   if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  // Calculate the new front weight
-  weight_front = (atoi(redis_value) - (weight_removed / 2)) / 2;
+  uint16_t weight_front = (atoi(redis_value) - (weight_removed / 2)) / 2;
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
@@ -490,8 +490,7 @@ void WeightUpdate(uint16_t amount_time) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  // Calculate the new rear weight
-  weight_rear = (atoi(redis_value) - (weight_removed / 2)) / 2;
+  uint16_t weight_rear = (atoi(redis_value) - (weight_removed / 2)) / 2;
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
@@ -507,7 +506,7 @@ void WeightUpdate(uint16_t amount_time) {
 
   usleep(I2C_MESSAGE_DELAY_US);
 
-  // TODO: hitch weight (???)
+  // TODO: handle hitch weight
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x04, 0);
   I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
@@ -516,7 +515,6 @@ void WeightUpdate(uint16_t amount_time) {
 
   usleep(I2C_MESSAGE_DELAY_US);
 }
-
 
 /*
 
@@ -598,13 +596,15 @@ int main() {
   weight[REAR] = atoi(redis_value);
 
   DACConfig();
+  gettimeofday(&time_stamp,NULL);
 
-  printf("Retrieved initial angle data\n");
-
-  uint16_t previousTime = 0;
+  printf("starting main loop\n");
   while (true) {
-    printf("The time it took the while loop was {%d}", previousTime);
-    start = clock();
+    struct timeval next_time_stamp;
+    gettimeofday(&next_time_stamp,NULL);
+    time_elapsed_ms = ((next_time_stamp.tv_sec - time_stamp.tv_sec) * 1000) + ((next_time_stamp.tv_usec - time_stamp.tv_usec) / 1000);
+    printf("Time Elapsed: %dms\n", time_elapsed_ms);
+    time_stamp = next_time_stamp;
 
     for (size_t i = 0; i < STM32_PARAMETERS_SIZE; i++) {
       STM32Request(stm32_parameters[i].key, stm32_parameters[i].type, stm32_parameters[i].index);
@@ -617,10 +617,7 @@ int main() {
     }
 
     STM32Update("PTO_SPEED", 0x01, 0x01);
-
-    end = clock();
-    previousTime = ((uint16_t) (end - start)) / CLOCKS_PER_SEC;
-    WeightUpdate(previousTime);
+    WeightUpdate();
   }
   RedisSet(redis_context, "ONLINE", "0");
   CleanupAndExit(EXIT_SUCCESS);

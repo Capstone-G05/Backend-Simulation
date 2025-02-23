@@ -193,7 +193,7 @@ void InitializeData(void) {
 void CleanupAndExit(int exit_code) {
   // Attempt to set ONLINE status to 0 (ie. "offline")
   if (RedisSet(redis_context, "ONLINE", "0") < 0) {
-    printf("Failed to set status 0 (ie. 'OFFLINE')")
+    printf("Failed to set status 0 (ie. 'OFFLINE')");
   }
   // Close I2C connections
   if (i2c_fd >= 0) {

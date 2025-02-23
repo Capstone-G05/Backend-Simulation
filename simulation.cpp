@@ -191,12 +191,19 @@ void InitializeData(void) {
 
 */
 void CleanupAndExit(int exit_code) {
+  // Attempt to set ONLINE status to 0 (ie. "offline")
+  if (RedisSet(redis_context, "ONLINE", "0") < 0) {
+    printf("Failed to set status 0 (ie. 'OFFLINE')")
+  }
+  // Close I2C connections
   if (i2c_fd >= 0) {
     close(i2c_fd);
   }
+  // Close Redis connection
   if (redis_context != nullptr) {
     redisFree(redis_context);
   }
+  // Exit with ERROR_CODE
   exit(exit_code);
 }
 
@@ -554,26 +561,31 @@ void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
 
 
 int main() {
-  setbuf(stdout, NULL); // disable buffering
+  setbuf(stdout, NULL); // disable stdout buffering
   printf("~ Starting Simulation ~\n");
   signal(SIGINT, HandleSigint);
 
+  // Initialize I2C device
   if ((i2c_fd = OpenI2CDevice()) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
   printf("Initialized I2C device\n");
 
+  // Initialize Redis connection
   if (RedisConnect(&redis_context, redis_host, redis_port) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
   printf("Initialized Redis connection\n");
 
+  // Configure DAC
   // DACConfig(); // TODO: there may be a bug here (pivot -> 5V), not sure...
-  gettimeofday(&time_stamp,NULL);
 
-  printf("starting main loop\n");
+  gettimeofday(&time_stamp,NULL);
   char redis_value[MAX_STRING_LENGTH];
+
+  printf("Starting main loop\n");
   while (true) {
+    // Update time stamp and calculate system loop duration
     struct timeval next_time_stamp;
     gettimeofday(&next_time_stamp,NULL);
     time_elapsed_ms = ((next_time_stamp.tv_sec - time_stamp.tv_sec) * 1000) + ((next_time_stamp.tv_usec - time_stamp.tv_usec) / 1000);
@@ -583,6 +595,7 @@ int main() {
     printf("Time Elapsed: %dms\n", time_elapsed_ms);
 #endif
 
+    // Get simulation 'constants 'from Redis
     for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
       RedisRequest(angle_min, i, "_ANGLE_MIN");
       RedisRequest(angle_max, i, "_ANGLE_MAX");
@@ -591,37 +604,41 @@ int main() {
       angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
     }
 
+    // Get simulation 'parameters' from Redis
     if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){
       CleanupAndExit(EXIT_FAILURE);
     }
     pto_speed = atoi(redis_value);
-
     if (RedisGet(redis_context, "PTO_FLOW_RATE", redis_value) < 0){
       CleanupAndExit(EXIT_FAILURE);
     }
     pto_flow_rate = atoi(redis_value);
-
     if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
       CleanupAndExit(EXIT_FAILURE);
     }
     weight[FRONT] = atoi(redis_value);
-
     if (RedisGet(redis_context, "WEIGHT_REAR", redis_value) < 0) {
       CleanupAndExit(EXIT_FAILURE);
     }
     weight[REAR] = atoi(redis_value);
 
+    // Calculate simulation weights and send to STM32 & Redis
     WeightUpdate();
-    STM32Update("PTO_SPEED", 0x01, 0x01);
 
+    // Send simulation 'outputs' to STM32
+    STM32Update("PTO_SPEED", 0x01, 0x01);
+    // TODO: wheel speed & direction
+
+    // Get PWM values and processor status from the STM32 and send to Redis
     for (size_t i = 0; i < STM32_PARAMETERS_SIZE; i++) {
       STM32Request(stm32_parameters[i].key, stm32_parameters[i].type, stm32_parameters[i].index);
     }
 
+    // Send angle values to the DAC
     for (size_t i = 0; i < DAC_PARAMETERS_SIZE; i++) {
       DACUpdate(dac_parameters[i].key, i, dac_parameters[i].index);
     }
   }
-  RedisSet(redis_context, "ONLINE", "0");
-  CleanupAndExit(EXIT_SUCCESS);
+
+  CleanupAndExit(EXIT_SUCCESS); // unreachable
 }

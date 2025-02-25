@@ -612,7 +612,7 @@ int main(void) {
     for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
       RedisRequest(angle_min, i, "_ANGLE_MIN");
       RedisRequest(angle_max, i, "_ANGLE_MAX");
-      RedisRequest(speed_ref, i, "_SPEED_REF");
+      RedisRequest(speed_ref, i, "_SPEED_REFERENCE");
       angle_range[i] = angle_max[i] - angle_min[i];
       angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
     }

@@ -38,6 +38,8 @@
 
 #define I2C_MESSAGE_DELAY_US 10000
 
+#define FRAME_RATE_DEFAULT 60
+
 /* TYPEDEFS */
 
 typedef enum {
@@ -165,7 +167,9 @@ void RedisRequest(int16_t*, uint8_t, const char*);
 void STM32Update(const char*, uint8_t, uint8_t);
 void DACConfig(void);
 void DACUpdate(const char*, uint8_t, uint8_t);
+
 void WeightUpdate(void);
+void AngleUpdate(void);
 
 /* FUNCTION IMPLEMENTATIONS */
 
@@ -448,10 +452,53 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
   I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
 }
 
+
 /*
 
 */
-void WeightUpdate() {
+void DACConfig(void){
+    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
+
+    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
+        CleanupAndExit(EXIT_FAILURE);
+    }
+
+    DACPack(tx_buffer, 0x08, DAC_VREF_MODE, DAC_WRITE_CMD_MASK);
+    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+}
+
+/*
+
+*/
+void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
+    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
+    char redis_value[MAX_STRING_LENGTH];
+
+    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
+        CleanupAndExit(EXIT_FAILURE);
+    }
+
+    if (RedisGet(redis_context, key, redis_value) < 0) {
+        CleanupAndExit(EXIT_FAILURE);
+    }
+
+    angle[movement] = atoi(redis_value);
+    int16_t absolute_angle = angle[movement] - angle_min[movement];
+    int16_t adjusted_angle = angle_start[movement] + absolute_angle;
+    uint16_t angle_voltage = (uint16_t)((float(adjusted_angle) / 360.0) * 1023);
+
+#ifdef DEBUG
+    printf("%d: ANGLE=%d MIN=%d MAX=%d RANGE=%d START=%d ABS=%d ADJ=%d VOLT=%d\n", index, angle[movement], angle_min[movement], angle_max[movement], angle_range[movement], angle_start[movement], absolute_angle, adjusted_angle, angle_voltage);
+#endif
+
+    DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
+    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+}
+
+/*
+
+*/
+void WeightUpdate(void) {
   uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
   uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
   char redis_string[MAX_STRING_LENGTH];
@@ -520,47 +567,13 @@ void WeightUpdate() {
 /*
 
 */
-void DACConfig(void){
-    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
-
-    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
-        CleanupAndExit(EXIT_FAILURE);
-    }
-  
-    DACPack(tx_buffer, 0x08, DAC_VREF_MODE, DAC_WRITE_CMD_MASK);
-    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+void AngleUpdate(void) {
+  // TODO: get FRAME_RATE from Redis (or use FRAME_RATE_DEFAULT if null)
+  // TODO: save PWM locally in STM32Request()
+  // TODO: extrapolate new angle values based on FRAME_RATE, SPEED_REF, and angle[i]
 }
 
-/*
-
-*/
-void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
-    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
-    char redis_value[MAX_STRING_LENGTH];
-
-    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
-        CleanupAndExit(EXIT_FAILURE);
-    }
-
-    if (RedisGet(redis_context, key, redis_value) < 0) {
-        CleanupAndExit(EXIT_FAILURE);
-    }
-
-    angle[movement] = atoi(redis_value);
-    int16_t absolute_angle = angle[movement] - angle_min[movement];
-    int16_t adjusted_angle = angle_start[movement] + absolute_angle;
-    uint16_t angle_voltage = (uint16_t)((float(adjusted_angle) / 360.0) * 1023);
-
-#ifdef DEBUG
-    printf("%d: ANGLE=%d MIN=%d MAX=%d RANGE=%d START=%d ABS=%d ADJ=%d VOLT=%d\n", index, angle[movement], angle_min[movement], angle_max[movement], angle_range[movement], angle_start[movement], absolute_angle, adjusted_angle, angle_voltage);
-#endif
-
-    DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
-    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
-}
-
-
-int main() {
+int main(void) {
   setbuf(stdout, NULL); // disable stdout buffering
   printf("~ Starting Simulation ~\n");
   signal(SIGINT, HandleSigint);
@@ -603,6 +616,9 @@ int main() {
       angle_range[i] = angle_max[i] - angle_min[i];
       angle_start[i] = ANGLE_CENTER - (angle_range[i] / 2);
     }
+
+    // Interpolate simulation angles in tandem with frontend simulation
+    AngleUpdate();
 
     // Get simulation 'parameters' from Redis
     if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){

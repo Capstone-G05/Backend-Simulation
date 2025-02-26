@@ -525,15 +525,15 @@ void WeightUpdate(void) {
   if (pto_speed > 0 && pto_flow_rate > 0) {
     weight_removed = (uint16_t)(((float)(pto_speed * pto_flow_rate) / 3600.0 / 1000.0) * time_elapsed_ms);
     if (weight_removed > 0) {
-      if (weight_front < (weight_removed / 4)) {
+      if (weight_front < (weight_removed / 2)) {
         weight_front = 0;
       } else {
-        weight_front -= weight_removed / 4;
+        weight_front -= weight_removed / 2;
       }
-      if (weight_rear < (weight_removed / 4)) {
+      if (weight_rear < (weight_removed / 2)) {
         weight_rear = 0;
       } else {
-        weight_rear -= weight_removed / 4;
+        weight_rear -= weight_removed / 2;
       }
     }
   }
@@ -556,7 +556,7 @@ void WeightUpdate(void) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front / 2);
   if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
     return;
   }
@@ -565,7 +565,7 @@ void WeightUpdate(void) {
     return;
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x01, weight_front);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x01, weight_front / 2);
   if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
     return;
   }
@@ -574,7 +574,7 @@ void WeightUpdate(void) {
     return;
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear / 2);
   if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
     return;
   }
@@ -583,7 +583,7 @@ void WeightUpdate(void) {
     return;
   }
 
-  STM32Pack(tx_buffer, WRITE, 0x03, 0x03, weight_rear);
+  STM32Pack(tx_buffer, WRITE, 0x03, 0x03, weight_rear / 2);
   if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
     return;
   }

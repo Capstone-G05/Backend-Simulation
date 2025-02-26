@@ -17,8 +17,10 @@
 
 /* DEFINES */
 
-//#define LOCAL  // for testing with no I2C bus
+#define LOCAL  // for testing with no I2C bus
 #define DEBUG  // for printing debug statements
+
+#define DEFAULT_VALUE 0
 
 #define I2C_DEVICE "/dev/i2c-1"
 #define STM32_I2C_ADDRESS 0x10
@@ -177,17 +179,17 @@ void AngleUpdate(void);
 
 */
 void InitializeData(void) {
-  uint16_t default_value = 0;
-
   for (size_t i = 0; i < NUM_AUGER_MOVEMENTS; i++) {
-    angle[i] = default_value;
-    angle_min[i] = default_value;
-    angle_max[i] = default_value;
-    speed_ref[i] = default_value;
+    angle[i] = DEFAULT_VALUE;
+    angle_min[i] = DEFAULT_VALUE;
+    angle_max[i] = DEFAULT_VALUE;
+    angle_range[i] = DEFAULT_VALUE;
+    angle_start[i] = DEFAULT_VALUE;
+    speed_ref[i] = DEFAULT_VALUE;
   }
 
   for (size_t i = 0; i < NUM_WEIGHT_LOCATIONS; i++) {
-    weight[i] = default_value;
+    weight[i] = DEFAULT_VALUE;
   }
 }
 
@@ -402,7 +404,7 @@ void RedisRequest(int16_t *data, uint8_t movement, const char *type) {
 
   snprintf(redis_key, sizeof(redis_key), "%s%s", AugerMovementNames[movement], type);
   if (RedisGet(redis_context, redis_key, redis_value) < 0) {
-    perror("Failed to read Redis");
+    return;
   }
   data[movement] = atoi(redis_value);
 }
@@ -411,8 +413,8 @@ void RedisRequest(int16_t *data, uint8_t movement, const char *type) {
 
 */
 void STM32Request(const char *key, uint8_t type, uint8_t index) {
-  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
-  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
+  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE] = {DEFAULT_VALUE};
   STM32Message rx_message;
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
@@ -420,23 +422,29 @@ void STM32Request(const char *key, uint8_t type, uint8_t index) {
   }
 
   STM32Pack(tx_buffer, READ, type, index, 0);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
   STM32Parse(rx_buffer, &rx_message);
 
   char rx_string[MAX_STRING_LENGTH];
   sprintf(rx_string, "%u", rx_message.value);
-  RedisSet(redis_context, key, rx_string);
+  if (RedisSet(redis_context, key, rx_string) < 0) {
+    return;
+  }
 }
 
 /*
 
 */
 void STM32Update(const char *key, uint8_t type, uint8_t index) {
-  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
-  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
-  char redis_value[MAX_STRING_LENGTH];
+  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  char redis_value[MAX_STRING_LENGTH] = "";
 
   if (RedisGet(redis_context, key, redis_value) < 0) {
     CleanupAndExit(EXIT_FAILURE);
@@ -447,9 +455,13 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
   }
 
   STM32Pack(tx_buffer, WRITE, type, index, atoi(redis_value));
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 }
 
 
@@ -457,51 +469,55 @@ void STM32Update(const char *key, uint8_t type, uint8_t index) {
 
 */
 void DACConfig(void){
-    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
+  uint8_t tx_buffer[DAC_TX_BUFFER_SIZE] = {DEFAULT_VALUE};
 
-    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
-        CleanupAndExit(EXIT_FAILURE);
-    }
+  if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
+      CleanupAndExit(EXIT_FAILURE);
+  }
 
-    DACPack(tx_buffer, 0x08, DAC_VREF_MODE, DAC_WRITE_CMD_MASK);
-    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+  DACPack(tx_buffer, 0x08, DAC_VREF_MODE, DAC_WRITE_CMD_MASK);
+  if (I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE) < 0 ) {
+    return;
+  }
 }
 
 /*
 
 */
 void DACUpdate(const char *key, uint8_t movement, uint8_t index) {
-    uint8_t tx_buffer[DAC_TX_BUFFER_SIZE];
-    char redis_value[MAX_STRING_LENGTH];
+  uint8_t tx_buffer[DAC_TX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  char redis_value[MAX_STRING_LENGTH] = "";
 
-    if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
-        CleanupAndExit(EXIT_FAILURE);
-    }
+  if (SetI2CAddress(i2c_fd, DAC_I2C_ADDRESS) < 0){
+      CleanupAndExit(EXIT_FAILURE);
+  }
 
-    if (RedisGet(redis_context, key, redis_value) < 0) {
-        CleanupAndExit(EXIT_FAILURE);
-    }
+  if (RedisGet(redis_context, key, redis_value) < 0) {
+      CleanupAndExit(EXIT_FAILURE);
+  }
 
-    angle[movement] = atoi(redis_value);
-    int16_t absolute_angle = angle[movement] - angle_min[movement];
-    int16_t adjusted_angle = angle_start[movement] + absolute_angle;
-    uint16_t angle_voltage = (uint16_t)((float(adjusted_angle) / 360.0) * 1023);
+  angle[movement] = atoi(redis_value);
+  int16_t absolute_angle = angle[movement] - angle_min[movement];
+  int16_t adjusted_angle = angle_start[movement] + absolute_angle;
+  uint16_t angle_voltage = (uint16_t)((float(adjusted_angle) / 360.0) * 1023);
 
 #ifdef DEBUG
-    printf("%d: ANGLE=%d MIN=%d MAX=%d RANGE=%d START=%d ABS=%d ADJ=%d VOLT=%d\n", index, angle[movement], angle_min[movement], angle_max[movement], angle_range[movement], angle_start[movement], absolute_angle, adjusted_angle, angle_voltage);
+  printf("%d: ANGLE=%d MIN=%d MAX=%d RANGE=%d START=%d ABS=%d ADJ=%d VOLT=%d\n", index, angle[movement], angle_min[movement], angle_max[movement], angle_range[movement], angle_start[movement], absolute_angle, adjusted_angle, angle_voltage);
 #endif
 
-    DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
-    I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE);
+  DACPack(tx_buffer, index, angle_voltage, DAC_WRITE_CMD_MASK);
+  if (I2CWrite(i2c_fd, tx_buffer, DAC_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
 }
 
 /*
 
 */
 void WeightUpdate(void) {
-  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE];
-  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE];
-  char redis_string[MAX_STRING_LENGTH];
+  uint8_t tx_buffer[STM32_TX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  uint8_t rx_buffer[STM32_RX_BUFFER_SIZE] = {DEFAULT_VALUE};
+  char redis_string[MAX_STRING_LENGTH] = "";
 
   uint16_t weight_removed = 0;
   uint16_t weight_front = weight[FRONT];
@@ -528,40 +544,64 @@ void WeightUpdate(void) {
 #endif
 
   sprintf(redis_string, "%u", weight_front);
-  RedisSet(redis_context, "WEIGHT_FRONT", redis_string);
+  if (RedisSet(redis_context, "WEIGHT_FRONT", redis_string) < 0) {
+    return;
+  }
   sprintf(redis_string, "%u", weight_rear);
-  RedisSet(redis_context, "WEIGHT_REAR", redis_string);
+  if (RedisSet(redis_context, "WEIGHT_REAR", redis_string) < 0) {
+    return;
+  }
 
   if (SetI2CAddress(i2c_fd, STM32_I2C_ADDRESS) < 0) {
     CleanupAndExit(EXIT_FAILURE);
   }
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x00, weight_front);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x01, weight_front);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x02, weight_rear);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x03, weight_rear);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 
   // TODO: handle hitch weight
 
   STM32Pack(tx_buffer, WRITE, 0x03, 0x04, 0);
-  I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE);
+  if (I2CWrite(i2c_fd, tx_buffer, STM32_TX_BUFFER_SIZE) < 0) {
+    return;
+  }
   usleep(I2C_MESSAGE_DELAY_US);
-  I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE);
+  if (I2CRead(i2c_fd, rx_buffer, STM32_RX_BUFFER_SIZE) < 0) {
+    return;
+  }
 }
 
 /*
@@ -594,7 +634,7 @@ int main(void) {
   // DACConfig(); // TODO: there may be a bug here (pivot -> 5V), not sure...
 
   gettimeofday(&time_stamp,NULL);
-  char redis_value[MAX_STRING_LENGTH];
+  char redis_value[MAX_STRING_LENGTH] = "";
 
   printf("Starting main loop\n");
   while (true) {
@@ -622,19 +662,19 @@ int main(void) {
 
     // Get simulation 'parameters' from Redis
     if (RedisGet(redis_context, "PTO_SPEED", redis_value) < 0){
-      CleanupAndExit(EXIT_FAILURE);
+      continue;
     }
     pto_speed = atoi(redis_value);
     if (RedisGet(redis_context, "PTO_FLOW_RATE", redis_value) < 0){
-      CleanupAndExit(EXIT_FAILURE);
+      continue;
     }
     pto_flow_rate = atoi(redis_value);
     if (RedisGet(redis_context, "WEIGHT_FRONT", redis_value) < 0) {
-      CleanupAndExit(EXIT_FAILURE);
+      continue;
     }
     weight[FRONT] = atoi(redis_value);
     if (RedisGet(redis_context, "WEIGHT_REAR", redis_value) < 0) {
-      CleanupAndExit(EXIT_FAILURE);
+      continue;
     }
     weight[REAR] = atoi(redis_value);
 
